@@ -11,7 +11,7 @@ from datetime import datetime
 # ==========================================
 st.set_page_config(page_title="Estellé Parquet - Seguiment d'Obra", page_icon="🏗️", layout="centered")
 
-# Injectem CSS per personalitzar la interfície
+# Injectem CSS per personalitzar la interfície (CORREGIT: unsafe_allow_html=True)
 st.markdown("""
     <style>
     .stApp { background-color: #fdfaf4; }
@@ -37,17 +37,13 @@ st.markdown("""
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     
-    # Carreguem les dades de configuració
-    # RECORDA: Les pestanyes s'han de dir EXACTAMENT així al Google Sheets
+    # Llegim les pestanyes (RECORDA: Han d'existir exactament amb aquests noms)
     projects_df = conn.read(worksheet="Projectes")
     templates_df = conn.read(worksheet="Config_Templates")
 except Exception as e:
-    st.error("❌ ERROR DE CONNEXIÓ (404 Not Found)")
-    st.write("Això sol passar per un d'aquests motius:")
-    st.write("1. **ID Incorrecte:** Revisa que la URL del Spreadsheet als Secrets sigui la correcta.")
-    st.write("2. **Permisos:** Has compartit el Google Sheet amb el correu del JSON com a Editor?")
-    st.write("3. **Noms de pestanya:** Tens les pestanyes 'Projectes' i 'Config_Templates' creades?")
-    st.info(f"Detall tècnic: {e}")
+    st.error("❌ ERROR DE CONNEXIÓ AMB EL FULL DE CÀLCUL")
+    st.write("Si veus un error 404, revisa que l'ID del Sheet als Secrets sigui correcte i que hagis compartit el fitxer amb el correu del JSON com a Editor.")
+    st.info(f"Detall de l'error: {e}")
     st.stop()
 
 # ==========================================
@@ -57,9 +53,8 @@ st.title("🏗️ Seguiment d'Obra")
 st.write("---")
 
 # Selecció de Projecte i Tipus de Treball
-col_header1, col_header2 = st.columns(2)
-
 try:
+    col_header1, col_header2 = st.columns(2)
     with col_header1:
         projecte_sel = st.selectbox("Selecciona el Projecte", projects_df['Nom'].unique())
         dades_projecte = projects_df[projects_df['Nom'] == projecte_sel].iloc[0]
@@ -67,13 +62,13 @@ try:
     with col_header2:
         tipus_sel = st.selectbox("Tipus de Treball", templates_df['Tipus'].unique())
         config = templates_df[templates_df['Tipus'] == tipus_sel].iloc[0]
-except Exception as e:
-    st.warning("No s'han pogut carregar els projectes o templates. Revisa que les columnes del Google Sheet siguin correcte.")
-    st.stop()
 
-# Mostrem el logo del client dinàmicament
-if pd.notna(dades_projecte['Logo_Client']):
-    st.image(dades_projecte['Logo_Client'], width=120)
+    # Mostrem logo si existeix
+    if pd.notna(dades_projecte['Logo_Client']) and dades_projecte['Logo_Client'] != "":
+        st.image(dades_projecte['Logo_Client'], width=120)
+except Exception as e:
+    st.warning("⚠️ No s'han pogut carregar les dades. Revisa les columnes de 'Projectes' i 'Config_Templates'.")
+    st.stop()
 
 st.write("") 
 
@@ -162,7 +157,7 @@ if submit:
                     
                     <div style="padding: 20px; background: #fdfaf4; text-align: center; border-top: 1px solid #eee;">
                         <p style="font-size: 12px; color: #aaa; margin: 0;">Responsable en obra: <strong>{responsable}</strong></p>
-                        <p style="font-size: 10px; color: #ccc; margin-top: 10px;">Generado automáticamente por Estellé Parquet Digital</p>
+                        <p style="font-size: 10px; color: #ccc; margin-top: 10px;">Generat automàticament per Estellé Parquet Digital</p>
                     </div>
                 </div>
             </body>
@@ -176,8 +171,8 @@ if submit:
                 server.login(smtp_conf['user'], smtp_conf['password'])
                 server.send_message(msg)
 
-            st.success("✅ Dades guardades i informe enviat amb èxit!")
+            st.success("✅ Dades guardades i informe enviat!")
             st.balloons()
             
         except Exception as err:
-            st.error(f"❌ Error durant el procés: {err}")
+            st.error(f"❌ Error: {err}")

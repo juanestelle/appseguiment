@@ -11,7 +11,6 @@ from datetime import datetime
 # ==========================================
 st.set_page_config(page_title="Estellé Parquet - Seguiment d'Obra", page_icon="🏗️", layout="centered")
 
-# Injectem CSS per personalitzar la interfície amb el lila corporatiu i fons crema
 st.markdown("""
     <style>
     .stApp { background-color: #fdfaf4; }
@@ -23,44 +22,48 @@ st.markdown("""
         height: 3em;
         font-weight: bold;
     }
-    .stSelectbox label, .stTextInput label, .stNumberInput label {
-        color: #4b0082;
-        font-weight: bold;
-    }
     h1 { color: #6a5acd; text-align: center; margin-bottom: 0px; }
     .subtext { text-align: center; color: #888; font-size: 0.9em; margin-bottom: 20px; }
     </style>
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. CONNEXIÓ A DADES (GOOGLE SHEETS)
+# 2. CONNEXIÓ A DADES (DIAGNÒSTIC AVANÇAT)
 # ==========================================
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     
-    # Intentem llegir les dades de configuració
-    projects_df = conn.read(worksheet="Projectes")
-    templates_df = conn.read(worksheet="Config_Templates")
+    # Intentem llegir les pestanyes una a una per detectar l'error
+    try:
+        projects_df = conn.read(worksheet="Projectes")
+    except Exception as e:
+        st.error("No s'ha trobat la pestanya 'Projectes'. Revisa que el nom sigui exactament aquest.")
+        st.stop()
+        
+    try:
+        templates_df = conn.read(worksheet="Config_Templates")
+    except Exception as e:
+        st.error("No s'ha trobat la pestanya 'Config_Templates'.")
+        st.stop()
+
 except Exception as e:
-    st.error("❌ ERROR DE CONNEXIÓ AMB EL FULL DE CÀLCUL (404)")
+    st.error("❌ ERROR CRÍTIC DE CONNEXIÓ (404)")
     st.markdown(f"""
-    **El sistema no troba el fitxer. Revisa això:**
-    1. **Activar Google Drive API:** Ves a Google Cloud Console i activa també la 'Google Drive API'.
-    2. **Permisos:** Has compartit el full de càlcul amb `app-seguiment-service@estelle-app-488715.iam.gserviceaccount.com` com a **Editor**?
-    3. **Pestanyes:** El teu Google Sheet ha de tenir pestanyes anomenades: `Projectes`, `Config_Templates` i `Seguiment`.
-    
-    *Detall de l'error:* `{e}`
+    **El robot no pot accedir al fitxer. Passos finals:**
+    1. **URL:** Comprova que als Secrets hagis posat l'ID correcte: `17vINdoX_lvj7Yq89J3SKHU6ISHoGQHYiA_9vtBTKJEA`
+    2. **Editor:** El correu `app-seguiment-service@estelle-app-488715.iam.gserviceaccount.com` ha de ser **Editor** al botó Compartir.
+    3. **APIs:** Confirma que 'Google Sheets API' i 'Google Drive API' estan en **'Enabled'** a la consola de Google Cloud.
     """)
+    st.info(f"Detall tècnic: {e}")
     st.stop()
 
 # ==========================================
-# 3. INTERFÍCIE D'USUARI (FORMULARI)
+# 3. INTERFÍCIE D'USUARI
 # ==========================================
 st.title("🏗️ Seguiment d'Obra")
 st.markdown("<div class='subtext'>By ESTELLÉ parquet</div>", unsafe_allow_html=True)
 st.write("---")
 
-# Selecció de Projecte i Tipus de Treball
 try:
     col_header1, col_header2 = st.columns(2)
     with col_header1:
@@ -71,14 +74,11 @@ try:
         tipus_sel = st.selectbox("Tipus de Treball", templates_df['Tipus'].unique())
         config = templates_df[templates_df['Tipus'] == tipus_sel].iloc[0]
 
-    # Mostrem el logo del client si existeix
     if pd.notna(dades_projecte['Logo_Client']) and str(dades_projecte['Logo_Client']).startswith("http"):
         st.image(dades_projecte['Logo_Client'], width=100)
 except Exception as e:
-    st.warning(f"⚠️ Revisa les pestanyes del Sheets. Error: {e}")
+    st.warning(f"⚠️ Revisa les dades del Sheets: {e}")
     st.stop()
-
-st.write("") 
 
 with st.form("formulari_seguiment"):
     st.subheader(f"Informe de {tipus_sel}")
@@ -91,21 +91,19 @@ with st.form("formulari_seguiment"):
     with c3:
         v3 = st.number_input(f"{config['Camp3']}", min_value=0.0, step=0.1, format="%.1f")
         
-    comentaris = st.text_area("Comentaris de la jornada", placeholder="Ex: S'ha muntat parquet fins a la zona de la barra...", height=150)
+    comentaris = st.text_area("Comentaris de la jornada", height=150)
     responsable = st.text_input("Responsable en obra", value="Luis")
     
-    st.write("---")
-    submit = st.form_submit_button("FINALITZAR I ENVIAR INFORME DIARI")
+    submit = st.form_submit_button("FINALITZAR I ENVIAR INFORME")
 
 # ==========================================
-# 4. PROCESSAMENT: GUARDAR I ENVIAR EMAIL
+# 4. PROCESSAMENT
 # ==========================================
 if submit:
-    with st.spinner("Guardant a la base de dades i preparant email..."):
+    with st.spinner("Enviant dades..."):
         try:
-            # A. GUARDAR DADES AL GOOGLE SHEET
+            # GUARDAR A GOOGLE SHEETS
             seguiment_actual = conn.read(worksheet="Seguiment")
-            
             nova_fila = pd.DataFrame([{
                 "Data": datetime.now().strftime("%d/%m/%Y %H:%M"),
                 "Projecte": projecte_sel,
@@ -116,62 +114,34 @@ if submit:
                 "Comentaris": comentaris,
                 "Operari": responsable
             }])
-            
             updated_df = pd.concat([seguiment_actual, nova_fila], ignore_index=True)
             conn.update(worksheet="Seguiment", data=updated_df)
             
-            # B. ENVIAR EMAIL (DISSENY CORPORATIU)
+            # ENVIAR EMAIL
             smtp_conf = st.secrets["smtp"]
-            
             msg = MIMEMultipart()
             msg['Subject'] = f"Seguiment Obra: {projecte_sel} - {datetime.now().strftime('%d/%m/%Y')}"
             msg['From'] = f"Estellé Parquet <{smtp_conf['user']}>"
             msg['To'] = dades_projecte['Emails_Contacte']
 
             html_content = f"""
-            <html>
-            <body style="font-family: Arial, sans-serif; background-color: #fdfaf4; padding: 20px; color: #333;">
-                <div style="max-width: 600px; margin: auto; background: white; border: 1px solid #eee; border-radius: 10px; overflow: hidden;">
-                    <div style="padding: 20px; text-align: center; border-bottom: 1px solid #f0f0f0;">
-                        <img src="{dades_projecte['Logo_Client']}" height="60" style="margin-bottom: 10px;">
-                        <div style="font-size: 12px; color: #999; letter-spacing: 1px;">PROYECTO: {projecte_sel}</div>
-                    </div>
-                    
-                    <div style="padding: 30px;">
-                        <h2 style="color: #6a5acd; text-align: center; font-size: 20px; margin-bottom: 25px;">TRABAJOS REALIZADOS</h2>
-                        
-                        <table style="width: 100%; text-align: center; border-collapse: collapse;">
-                            <tr>
-                                <td style="padding: 10px;">
-                                    <span style="font-size: 24px; font-weight: bold; color: #444;">{v1}</span><br>
-                                    <span style="font-size: 13px; color: #888;">{config['Camp1']}</span>
-                                </td>
-                                <td style="padding: 10px;">
-                                    <span style="font-size: 24px; font-weight: bold; color: #444;">{v2}</span><br>
-                                    <span style="font-size: 13px; color: #888;">{config['Camp2']}</span>
-                                </td>
-                                <td style="padding: 10px;">
-                                    <span style="font-size: 24px; font-weight: bold; color: #444;">{v3}</span><br>
-                                    <span style="font-size: 13px; color: #888;">{config['Camp3']}</span>
-                                </td>
-                            </tr>
-                        </table>
-                        
-                        <div style="margin-top: 30px; padding: 20px; background-color: #f9f9fb; border-radius: 5px; border-left: 4px solid #6a5acd;">
-                            <strong style="color: #6a5acd; font-size: 14px;">COMENTARIOS DE LA JORNADA:</strong>
-                            <p style="font-size: 14px; line-height: 1.6; color: #555;">{comentaris}</p>
-                        </div>
-                    </div>
-                    
-                    <div style="padding: 20px; background: #fdfaf4; text-align: center; border-top: 1px solid #eee;">
-                        <p style="font-size: 12px; color: #aaa; margin: 0;">Responsable en obra: <strong>{responsable}</strong></p>
-                        <p style="font-size: 10px; color: #ccc; margin-top: 10px;">Estellé Parquet Digital</p>
-                    </div>
+            <div style="font-family: Arial, sans-serif; border: 1px solid #6a5acd; border-radius: 10px; overflow: hidden; max-width: 600px;">
+                <div style="background-color: #fdfaf4; padding: 20px; text-align: center;">
+                    <img src="{dades_projecte['Logo_Client']}" height="50">
+                    <h2 style="color: #6a5acd;">Informe de Trabajo</h2>
                 </div>
-            </body>
-            </html>
+                <div style="padding: 20px;">
+                    <p><strong>Proyecto:</strong> {projecte_sel}</p>
+                    <p><strong>{config['Camp1']}:</strong> {v1}</p>
+                    <p><strong>{config['Camp2']}:</strong> {v2}</p>
+                    <p><strong>{config['Camp3']}:</strong> {v3}</p>
+                    <p><strong>Comentarios:</strong> {comentaris}</p>
+                </div>
+                <div style="background: #f0f0f0; padding: 10px; text-align: center; font-size: 12px;">
+                    Responsable: {responsable} | Estellé Parquet
+                </div>
+            </div>
             """
-            
             msg.attach(MIMEText(html_content, 'html'))
             
             with smtplib.SMTP(smtp_conf['server'], smtp_conf['port']) as server:
@@ -179,7 +149,7 @@ if submit:
                 server.login(smtp_conf['user'], smtp_conf['password'])
                 server.send_message(msg)
 
-            st.success("✅ Informe enviat correctament!")
+            st.success("✅ Tot correcte! Informe enviat.")
             st.balloons()
             
         except Exception as err:

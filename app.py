@@ -11,7 +11,6 @@ from datetime import datetime
 # ==========================================
 st.set_page_config(page_title="Estellé Parquet", layout="centered")
 
-# Estils bàsics
 st.markdown("""
     <style>
     .stApp { background-color: #fdfaf4; }
@@ -21,19 +20,23 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. CONNEXIÓ DIRECTA
+# 2. CONNEXIÓ
 # ==========================================
-# Eliminem ttl=0 temporalment per evitar el 400 Bad Request
 conn = st.connection("gsheets", type=GSheetsConnection)
 
+# --- DEBUG: mostra l'error exacte de connexió ---
 try:
-    # Llegim les pestanyes. Si el robot veu les columnes, aquí ja no hauria de fallar.
-    df_projectes = conn.read(worksheet="Projectes")
-    df_templates = conn.read(worksheet="Config_Templates")
+    df_projectes = conn.read(worksheet="Projectes", ttl=0)
+    df_templates = conn.read(worksheet="Config_Templates", ttl=0)
 except Exception as e:
-    st.error("⚠️ Error en llegir les pestanyes")
-    st.write("Si la connexió abans funcionava, revisa que els noms de les pestanyes a baix de tot del Sheets siguin exactament 'Projectes' i 'Config_Templates'.")
-    st.info(f"Detall de l'error: {e}")
+    st.error("⚠️ Error de connexió amb Google Sheets")
+    st.code(str(e))  # <-- mostra l'error complet per diagnosticar
+    st.markdown("""
+    **Comprova:**
+    - Que `.streamlit/secrets.toml` té la URL del spreadsheet correcta
+    - Que el compte de servei té accés **Editor** al document
+    - Que els noms de les pestanyes coincideixen exactament
+    """)
     st.stop()
 
 # ==========================================
@@ -43,7 +46,6 @@ st.title("🏗️ Seguiment d'Obra")
 st.write("---")
 
 try:
-    # Netegem dades buides
     df_projectes = df_projectes.dropna(subset=['Nom'])
     df_templates = df_templates.dropna(subset=['Tipus'])
 
@@ -60,15 +62,14 @@ except Exception as e:
 
 with st.form("form_obra"):
     st.subheader(f"Informe de {tipus_sel}")
-    
-    # Camps dinàmics
-    v1 = st.number_input(f"{dades_t['Camp1']}", step=0.1) if pd.notna(dades_t['Camp1']) and dades_t['Camp1'] != "" else 0.0
-    v2 = st.number_input(f"{dades_t['Camp2']}", step=0.1) if pd.notna(dades_t['Camp2']) and dades_t['Camp2'] != "" else 0.0
-    v3 = st.number_input(f"{dades_t['Camp3']}", step=0.1) if pd.notna(dades_t['Camp3']) and dades_t['Camp3'] != "" else 0.0
-    
+
+    v1 = st.number_input(f"{dades_t['Camp1']}", step=0.1) if pd.notna(dades_t.get('Camp1', '')) and dades_t['Camp1'] != "" else 0.0
+    v2 = st.number_input(f"{dades_t['Camp2']}", step=0.1) if pd.notna(dades_t.get('Camp2', '')) and dades_t['Camp2'] != "" else 0.0
+    v3 = st.number_input(f"{dades_t['Camp3']}", step=0.1) if pd.notna(dades_t.get('Camp3', '')) and dades_t['Camp3'] != "" else 0.0
+
     comentaris = st.text_area("Comentaris de la jornada")
     operari = st.text_input("Operari responsable", value="Luis")
-    
+
     subm = st.form_submit_button("ENVIAR INFORME")
 
 # ==========================================
@@ -77,9 +78,15 @@ with st.form("form_obra"):
 if subm:
     with st.spinner("Enviant..."):
         try:
-            # A. Guardar al Sheets
-            # Intentem llegir la pestanya de Seguiment per afegir-hi la fila
-            df_seg = conn.read(worksheet="Seguiment")
+            # A. Llegir Seguiment (robust si la pestanya és buida o nova)
+            try:
+                df_seg = conn.read(worksheet="Seguiment", ttl=0)
+                # Eliminem files completament buides
+                df_seg = df_seg.dropna(how='all')
+            except Exception:
+                # Si la pestanya no existeix o és buida, partim de zero
+                df_seg = pd.DataFrame(columns=["Data","Projecte","Tipus","Dada1","Dada2","Dada3","Comentaris","Operari"])
+
             nova_fila = pd.DataFrame([{
                 "Data": datetime.now().strftime("%d/%m/%Y"),
                 "Projecte": obra_sel,
@@ -88,16 +95,20 @@ if subm:
                 "Comentaris": comentaris,
                 "Operari": operari
             }])
+
             df_final = pd.concat([df_seg, nova_fila], ignore_index=True)
             conn.update(worksheet="Seguiment", data=df_final)
 
-            # B. Email
+            # B. Email (gestió de múltiples destinataris separats per comes)
             smtp = st.secrets["smtp"]
+            emails_raw = str(dades_p['Emails_Contacte'])
+            destinataris = [e.strip() for e in emails_raw.split(',') if e.strip()]
+
             msg = MIMEMultipart()
             msg['Subject'] = f"Seguiment: {obra_sel} ({datetime.now().strftime('%d/%m/%Y')})"
             msg['From'] = f"Estellé Parquet <{smtp['user']}>"
-            msg['To'] = dades_p['Emails_Contacte']
-            
+            msg['To'] = ", ".join(destinataris)
+
             html = f"""
             <div style="font-family: sans-serif; border: 1px solid #6a5acd; padding: 20px; border-radius: 10px;">
                 <h2 style="color: #6a5acd;">Informe de Trabajo</h2>
@@ -109,13 +120,15 @@ if subm:
             </div>
             """
             msg.attach(MIMEText(html, 'html'))
-            
+
             with smtplib.SMTP(smtp['server'], smtp['port']) as s:
                 s.starttls()
                 s.login(smtp['user'], smtp['password'])
-                s.send_message(msg)
+                s.sendmail(smtp['user'], destinataris, msg.as_string())  # sendmail és més robust que send_message amb llista
 
             st.success("Informe enviat i guardat amb èxit!")
             st.balloons()
+
         except Exception as e:
             st.error(f"Error en el procés final: {e}")
+            st.code(str(e))  # mostra detall complet

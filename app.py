@@ -6,90 +6,116 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime
 
+# ==========================================
 # 1. CONFIGURACIÓ
+# ==========================================
 st.set_page_config(page_title="Estellé Parquet", layout="centered")
 
+# Estils bàsics
 st.markdown("""
     <style>
     .stApp { background-color: #fdfaf4; }
-    .stButton>button { background-color: #6a5acd; color: white; border-radius: 8px; font-weight: bold; width: 100%; }
+    .stButton>button { background-color: #6a5acd; color: white; border-radius: 8px; width: 100%; font-weight: bold; }
     h1 { color: #6a5acd; text-align: center; }
     </style>
     """, unsafe_allow_html=True)
 
-# 2. CONNEXIÓ NETA
-st.cache_data.clear() # Neteja total de memòria
+# ==========================================
+# 2. CONNEXIÓ DIRECTA
+# ==========================================
+# Eliminem ttl=0 temporalment per evitar el 400 Bad Request
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 try:
-    # Llegim les dades. Si el nom falla, el sistema s'aturarà aquí amb un missatge clar.
+    # Llegim les pestanyes. Si el robot veu les columnes, aquí ja no hauria de fallar.
     df_projectes = conn.read(worksheet="Projectes")
     df_templates = conn.read(worksheet="Config_Templates")
 except Exception as e:
-    st.error("⚠️ ERROR 400 / LECTURA")
-    st.write("Google no entén la petició. Revisa que:")
-    st.write("1. L'ID als Secrets sigui NOMÉS: `17vINdoX_lvj7Yq89J3SKHU6ISHoGQHYiA_9vtBTKJEA`")
-    st.write("2. Les pestanyes es diguin 'Projectes' i 'Config_Templates' (sense espais).")
+    st.error("⚠️ Error en llegir les pestanyes")
+    st.write("Si la connexió abans funcionava, revisa que els noms de les pestanyes a baix de tot del Sheets siguin exactament 'Projectes' i 'Config_Templates'.")
+    st.info(f"Detall de l'error: {e}")
     st.stop()
 
+# ==========================================
 # 3. INTERFÍCIE
+# ==========================================
 st.title("🏗️ Seguiment d'Obra")
 st.write("---")
 
 try:
+    # Netegem dades buides
+    df_projectes = df_projectes.dropna(subset=['Nom'])
+    df_templates = df_templates.dropna(subset=['Tipus'])
+
     col1, col2 = st.columns(2)
     with col1:
-        obra = st.selectbox("Projecte", df_projectes['Nom'].unique())
-        c_p = df_projectes[df_projectes['Nom'] == obra].iloc[0]
+        obra_sel = st.selectbox("Projecte", df_projectes['Nom'].unique())
+        dades_p = df_projectes[df_projectes['Nom'] == obra_sel].iloc[0]
     with col2:
-        tipus = st.selectbox("Treball", df_templates['Tipus'].unique())
-        c_t = df_templates[df_templates['Tipus'] == tipus].iloc[0]
+        tipus_sel = st.selectbox("Treball", df_templates['Tipus'].unique())
+        dades_t = df_templates[df_templates['Tipus'] == tipus_sel].iloc[0]
 except Exception as e:
-    st.error(f"Error en les columnes del Sheets: {e}")
+    st.error(f"Error en l'estructura de les dades: {e}")
     st.stop()
 
-with st.form("enviament"):
-    st.subheader(f"Dades de {tipus}")
-    v1 = st.number_input(f"{c_t['Camp1']}", step=0.1) if pd.notna(c_t['Camp1']) else 0.0
-    v2 = st.number_input(f"{c_t['Camp2']}", step=0.1) if pd.notna(c_t['Camp2']) else 0.0
-    v3 = st.number_input(f"{c_t['Camp3']}", step=0.1) if pd.notna(c_t['Camp3']) else 0.0
+with st.form("form_obra"):
+    st.subheader(f"Informe de {tipus_sel}")
     
-    comentaris = st.text_area("Observacions")
-    operari = st.text_input("Operari", value="Luis")
+    # Camps dinàmics
+    v1 = st.number_input(f"{dades_t['Camp1']}", step=0.1) if pd.notna(dades_t['Camp1']) and dades_t['Camp1'] != "" else 0.0
+    v2 = st.number_input(f"{dades_t['Camp2']}", step=0.1) if pd.notna(dades_t['Camp2']) and dades_t['Camp2'] != "" else 0.0
+    v3 = st.number_input(f"{dades_t['Camp3']}", step=0.1) if pd.notna(dades_t['Camp3']) and dades_t['Camp3'] != "" else 0.0
     
-    enviar = st.form_submit_button("ENVIAR ARA")
+    comentaris = st.text_area("Comentaris de la jornada")
+    operari = st.text_input("Operari responsable", value="Luis")
+    
+    subm = st.form_submit_button("ENVIAR INFORME")
 
-# 4. LÒGICA D'ENVIAMENT
-if enviar:
-    with st.spinner("Treballant..."):
+# ==========================================
+# 4. ENVIAMENT
+# ==========================================
+if subm:
+    with st.spinner("Enviant..."):
         try:
-            # A. Guardar al Sheets (Pestanya Seguiment)
-            df_seguiment = conn.read(worksheet="Seguiment")
+            # A. Guardar al Sheets
+            # Intentem llegir la pestanya de Seguiment per afegir-hi la fila
+            df_seg = conn.read(worksheet="Seguiment")
             nova_fila = pd.DataFrame([{
                 "Data": datetime.now().strftime("%d/%m/%Y"),
-                "Projecte": obra, "Tipus": tipus,
+                "Projecte": obra_sel,
+                "Tipus": tipus_sel,
                 "Dada1": v1, "Dada2": v2, "Dada3": v3,
-                "Comentaris": comentaris, "Operari": operari
+                "Comentaris": comentaris,
+                "Operari": operari
             }])
-            updated = pd.concat([df_seguiment, nova_fila], ignore_index=True)
-            conn.update(worksheet="Seguiment", data=updated)
+            df_final = pd.concat([df_seg, nova_fila], ignore_index=True)
+            conn.update(worksheet="Seguiment", data=df_final)
 
             # B. Email
             smtp = st.secrets["smtp"]
             msg = MIMEMultipart()
-            msg['Subject'] = f"Seguiment {obra}"
-            msg['From'] = smtp['user']
-            msg['To'] = c_p['Emails_Contacte']
+            msg['Subject'] = f"Seguiment: {obra_sel} ({datetime.now().strftime('%d/%m/%Y')})"
+            msg['From'] = f"Estellé Parquet <{smtp['user']}>"
+            msg['To'] = dades_p['Emails_Contacte']
             
-            cos = f"Projecte: {obra}\nTreball: {tipus}\nMesures: {v1}, {v2}, {v3}\n\nComentaris: {comentaris}"
-            msg.attach(MIMEText(cos, 'plain'))
+            html = f"""
+            <div style="font-family: sans-serif; border: 1px solid #6a5acd; padding: 20px; border-radius: 10px;">
+                <h2 style="color: #6a5acd;">Informe de Trabajo</h2>
+                <p><strong>Proyecto:</strong> {obra_sel}</p>
+                <p><strong>Trabajo:</strong> {tipus_sel}</p>
+                <hr>
+                <p>Comentarios: {comentaris}</p>
+                <p style="font-size: 11px; color: #888;">Operario: {operari}</p>
+            </div>
+            """
+            msg.attach(MIMEText(html, 'html'))
             
             with smtplib.SMTP(smtp['server'], smtp['port']) as s:
                 s.starttls()
                 s.login(smtp['user'], smtp['password'])
                 s.send_message(msg)
-            
-            st.success("Enviat!")
+
+            st.success("Informe enviat i guardat amb èxit!")
             st.balloons()
         except Exception as e:
-            st.error(f"Error en l'enviament: {e}")
+            st.error(f"Error en el procés final: {e}")

@@ -19,11 +19,24 @@ st.markdown("""
         color: white; 
         width: 100%; 
         border-radius: 8px;
-        height: 3em;
+        height: 3.5em;
         font-weight: bold;
+        border: none;
+        transition: 0.3s;
     }
-    h1 { color: #6a5acd; text-align: center; margin-bottom: 0px; }
-    .subtext { text-align: center; color: #888; font-size: 0.9em; margin-bottom: 20px; }
+    .stButton>button:hover { background-color: #4b0082; border: none; }
+    h1 { color: #6a5acd; text-align: center; margin-bottom: 0px; font-family: 'Helvetica', sans-serif; }
+    .subtext { text-align: center; color: #888; font-size: 0.9em; margin-bottom: 30px; letter-spacing: 2px; }
+    .stSelectbox label, .stTextInput label, .stNumberInput label, .stTextArea label {
+        color: #6a5acd !important;
+        font-weight: bold !important;
+    }
+    div[data-testid="stForm"] {
+        border: 1px solid #e6e6e6;
+        border-radius: 15px;
+        background-color: #ffffff;
+        padding: 25px;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -32,126 +45,123 @@ st.markdown("""
 # ==========================================
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
-    
-    # Carreguem les dades (L'error venia d'aquí)
     projects_df = conn.read(worksheet="Projectes")
     templates_df = conn.read(worksheet="Config_Templates")
-    
 except Exception as e:
-    st.error("❌ ERROR EN LES PESTANYES DEL SHEETS")
-    st.markdown(f"""
-    **L'App ha connectat al fitxer, però no troba la informació:**
-    1. Comprova que a la part inferior del teu Google Sheet hi hagi una pestanya anomenada **Projectes** i una altra **Config_Templates**.
-    2. Vigila que no hi hagi **espais** abans o després del nom.
-    
-    *Detall tècnic:* `{e}`
-    """)
+    st.error("❌ ERROR DE CONNEXIÓ")
+    st.info(f"Detall: {e}")
     st.stop()
 
 # ==========================================
 # 3. INTERFÍCIE D'USUARI
 # ==========================================
 st.title("🏗️ Seguiment d'Obra")
-st.markdown("<div class='subtext'>By ESTELLÉ parquet</div>", unsafe_allow_html=True)
-st.write("---")
+st.markdown("<div class='subtext'>ESTELLÉ PARQUET</div>", unsafe_allow_html=True)
 
-try:
-    col_header1, col_header2 = st.columns(2)
-    with col_header1:
-        # Netegem possibles duplicats o valors buits
-        noms_projectes = projects_df['Nom'].dropna().unique()
-        projecte_sel = st.selectbox("Selecciona el Projecte", noms_projectes)
-        dades_projecte = projects_df[projects_df['Nom'] == projecte_sel].iloc[0]
+# Selectors principals
+col_h1, col_h2 = st.columns(2)
+with col_h1:
+    noms_obres = projects_df['Nom'].dropna().unique()
+    projecte_sel = st.selectbox("Projecte actiu", noms_obres)
+    dades_proj = projects_df[projects_df['Nom'] == projecte_sel].iloc[0]
 
-    with col_header2:
-        tipus_treball = templates_df['Tipus'].dropna().unique()
-        tipus_sel = st.selectbox("Tipus de Treball", tipus_treball)
-        config = templates_df[templates_df['Tipus'] == tipus_sel].iloc[0]
+with col_h2:
+    tipus_treball = templates_df['Tipus'].dropna().unique()
+    tipus_sel = st.selectbox("Treball a realitzar", tipus_treball)
+    config = templates_df[templates_df['Tipus'] == tipus_sel].iloc[0]
 
-    # Mostrem el logo del client
-    if pd.notna(dades_projecte['Logo_Client']) and str(dades_projecte['Logo_Client']).startswith("http"):
-        st.image(dades_projecte['Logo_Client'], width=100)
-except Exception as e:
-    st.warning(f"⚠️ Revisa les columnes del teu Sheets. Error: {e}")
-    st.stop()
+# Logo del Client (si existeix)
+if pd.notna(dades_proj['Logo_Client']) and str(dades_proj['Logo_Client']).startswith("http"):
+    st.image(dades_proj['Logo_Client'], width=100)
 
-with st.form("formulari_seguiment"):
-    st.subheader(f"Informe de {tipus_sel}")
+st.write("")
+
+# FORMULARI DINÀMIC
+with st.form("main_form"):
+    st.subheader(f"Diari de {tipus_sel}")
     
+    # Lògica intel·ligent: Només mostrem els camps que has omplert al Sheets
     c1, c2, c3 = st.columns(3)
-    with c1:
-        v1 = st.number_input(f"{config['Camp1']}", min_value=0.0, step=0.1, format="%.1f")
-    with c2:
-        v2 = st.number_input(f"{config['Camp2']}", min_value=0.0, step=0.1, format="%.1f")
-    with c3:
-        v3 = st.number_input(f"{config['Camp3']}", min_value=0.0, step=0.1, format="%.1f")
-        
-    comentaris = st.text_area("Comentaris de la jornada", height=150)
-    responsable = st.text_input("Responsable en obra", value="Luis")
+    v1, v2, v3 = 0.0, 0.0, 0.0
     
-    submit = st.form_submit_button("FINALITZAR I ENVIAR INFORME")
+    with c1:
+        if pd.notna(config['Camp1']) and config['Camp1'] != "":
+            v1 = st.number_input(f"{config['Camp1']}", min_value=0.0, step=0.1, format="%.1f")
+    with c2:
+        if pd.notna(config['Camp2']) and config['Camp2'] != "":
+            v2 = st.number_input(f"{config['Camp2']}", min_value=0.0, step=0.1, format="%.1f")
+    with c3:
+        if pd.notna(config['Camp3']) and config['Camp3'] != "":
+            v3 = st.number_input(f"{config['Camp3']}", min_value=0.0, step=0.1, format="%.1f")
+            
+    comentaris = st.text_area("Comentaris de la jornada", height=120, placeholder="Escriu aquí qualsevol detall rellevant...")
+    responsable = st.text_input("Responsable", value="Luis")
+    
+    st.write("")
+    submit = st.form_submit_button("ENVIAR SEGUIMENT DIARI")
 
 # ==========================================
-# 4. PROCESSAMENT
+# 4. ENVIAMENT I REGISTRE
 # ==========================================
 if submit:
-    with st.spinner("Guardant i enviant..."):
+    with st.spinner("Sincronitzant amb el núvol..."):
         try:
-            # A. GUARDAR A GOOGLE SHEETS
-            seguiment_actual = conn.read(worksheet="Seguiment")
-            nova_fila = pd.DataFrame([{
+            # 1. ACTUALITZAR GOOGLE SHEETS
+            seguiment_df = conn.read(worksheet="Seguiment")
+            nova_data = pd.DataFrame([{
                 "Data": datetime.now().strftime("%d/%m/%Y %H:%M"),
                 "Projecte": projecte_sel,
                 "Tipus": tipus_sel,
-                "Dada1": v1,
-                "Dada2": v2,
-                "Dada3": v3,
+                "Dada1": v1, "Dada2": v2, "Dada3": v3,
                 "Comentaris": comentaris,
                 "Operari": responsable
             }])
-            updated_df = pd.concat([seguiment_actual, nova_fila], ignore_index=True)
-            conn.update(worksheet="Seguiment", data=updated_df)
+            final_df = pd.concat([seguiment_df, nova_data], ignore_index=True)
+            conn.update(worksheet="Seguiment", data=final_df)
             
-            # B. ENVIAR EMAIL
-            smtp_conf = st.secrets["smtp"]
+            # 2. ENVIAR EMAIL (DISSENY NET)
+            smtp = st.secrets["smtp"]
             msg = MIMEMultipart()
-            msg['Subject'] = f"Seguiment Obra: {projecte_sel} - {datetime.now().strftime('%d/%m/%Y')}"
-            msg['From'] = f"Estellé Parquet <{smtp_conf['user']}>"
-            msg['To'] = dades_projecte['Emails_Contacte']
+            msg['Subject'] = f"Seguiment: {projecte_sel} ({datetime.now().strftime('%d/%m/%Y')})"
+            msg['From'] = f"Estellé Parquet <{smtp['user']}>"
+            msg['To'] = dades_proj['Emails_Contacte']
 
-            html_content = f"""
-            <div style="font-family: Arial, sans-serif; border: 1px solid #6a5acd; border-radius: 10px; overflow: hidden; max-width: 600px; background-color: white;">
-                <div style="background-color: #fdfaf4; padding: 20px; text-align: center; border-bottom: 1px solid #eee;">
-                    <img src="{dades_projecte['Logo_Client']}" height="50">
-                    <h2 style="color: #6a5acd; margin-top: 10px;">Seguimiento Diario</h2>
+            # Construcció dinàmica de la taula de l'email
+            files_taula = ""
+            if v1 > 0: files_taula += f"<tr><td>{config['Camp1']}</td><td><strong>{v1}</strong></td></tr>"
+            if v2 > 0: files_taula += f"<tr><td>{config['Camp2']}</td><td><strong>{v2}</strong></td></tr>"
+            if v3 > 0: files_taula += f"<tr><td>{config['Camp3']}</td><td><strong>{v3}</strong></td></tr>"
+
+            html = f"""
+            <div style="font-family: 'Helvetica', sans-serif; max-width: 600px; margin: auto; border: 1px solid #eee; border-radius: 12px; overflow: hidden;">
+                <div style="background-color: #fdfaf4; padding: 30px; text-align: center;">
+                    <img src="{dades_proj['Logo_Client']}" height="50">
+                    <h2 style="color: #6a5acd; margin-top: 20px;">Seguimiento de Obra</h2>
+                    <p style="font-size: 12px; color: #999;">PROYECTO: {projecte_sel}</p>
                 </div>
                 <div style="padding: 30px;">
-                    <p style="color: #888; font-size: 12px; margin-bottom: 20px;">PROYECTO: {projecte_sel}</p>
-                    <table style="width: 100%; text-align: center; margin-bottom: 20px;">
-                        <tr>
-                            <td><strong>{v1}</strong><br><span style="color:#888; font-size:11px;">{config['Camp1']}</span></td>
-                            <td><strong>{v2}</strong><br><span style="color:#888; font-size:11px;">{config['Camp2']}</span></td>
-                            <td><strong>{v3}</strong><br><span style="color:#888; font-size:11px;">{config['Camp3']}</span></td>
-                        </tr>
+                    <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+                        {files_taula}
                     </table>
-                    <div style="background: #f9f9fb; padding: 15px; border-radius: 5px; border-left: 4px solid #6a5acd;">
-                        <strong>COMENTARIOS:</strong><br>{comentaris}
+                    <div style="background: #f9f9fb; padding: 20px; border-radius: 8px; border-left: 4px solid #6a5acd;">
+                        <strong style="color: #6a5acd; font-size: 13px;">COMENTARIOS:</strong><br>
+                        <p style="color: #444; line-height: 1.5;">{comentaris}</p>
                     </div>
                 </div>
-                <div style="background: #f0f0f0; padding: 10px; text-align: center; font-size: 11px; color: #aaa;">
-                    Responsable: {responsable} | Estellé Parquet Digital
+                <div style="background: #f4f4f4; padding: 15px; text-align: center; font-size: 11px; color: #888;">
+                    Responsable: {responsable} | Enviado por Estellé Parquet Digital
                 </div>
             </div>
             """
-            msg.attach(MIMEText(html_content, 'html'))
+            msg.attach(MIMEText(html, 'html'))
             
-            with smtplib.SMTP(smtp_conf['server'], smtp_conf['port']) as server:
-                server.starttls()
-                server.login(smtp_conf['user'], smtp_conf['password'])
-                server.send_message(msg)
+            with smtplib.SMTP(smtp['server'], smtp['port']) as s:
+                s.starttls()
+                s.login(smtp['user'], smtp['password'])
+                s.send_message(msg)
 
-            st.success("✅ Informe enviat correctament!")
+            st.success("✅ Informe enviat i guardat correctament!")
             st.balloons()
-            
+
         except Exception as err:
-            st.error(f"❌ Error: {err}")
+            st.error(f"⚠️ Error: {err}")

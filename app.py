@@ -17,7 +17,9 @@ st.markdown("""
     .stButton>button { 
         background-color: #6a5acd; color: white; width: 100%; 
         border-radius: 8px; height: 3.5em; font-weight: bold; border: none;
+        transition: 0.3s;
     }
+    .stButton>button:hover { background-color: #4b0082; }
     h1 { color: #6a5acd; text-align: center; margin-bottom: 0px; }
     .subtext { text-align: center; color: #888; font-size: 0.9em; margin-bottom: 30px; letter-spacing: 2px; }
     .status-ok { background-color: #e6ffed; border: 1px solid #34d399; padding: 10px; border-radius: 8px; color: #065f46; text-align: center; margin-bottom: 20px; }
@@ -25,71 +27,62 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. CONNEXIÓ I CÀRREGA INTEL·LIGENT
+# 2. CONNEXIÓ I CÀRREGA DE DADES
 # ==========================================
-# Forcem la neteja de memòria cada vegada que l'app arrenca
+# Netegem cache per evitar llegir dades velles del Sheets
 st.cache_data.clear()
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-def get_data_smart():
+def get_data():
     try:
-        # Intentem llegir el fitxer sencer per obtenir el diccionari de pestanyes
-        # El paràmetre ttl=0 evita que Streamlit ens ensenyi dades velles
-        all_sheets = conn.read(ttl=0) 
-        
-        # Intentem carregar les pestanyes específiques
-        # Si no les troba pel nom exacte, les busquem per "instint"
+        # Llegim les pestanyes amb ttl=0 per forçar dades fresques
         p_df = conn.read(worksheet="Projectes", ttl=0)
         t_df = conn.read(worksheet="Config_Templates", ttl=0)
         return p_df, t_df, None
     except Exception as e:
         return None, None, str(e)
 
-projects_df, templates_df, error_msg = get_data_smart()
+projects_df, templates_df, error_msg = get_data()
 
 # ==========================================
-# 3. DIAGNÒSTIC EN CAS D'ERROR
+# 3. GESTIÓ D'ERRORS DE CONNEXIÓ
 # ==========================================
 if error_msg:
-    st.error("⚠️ ERROR DE LECTURA DE PESTANYES")
-    st.write("La connexió amb el fitxer és correcta, però no trobo les dades.")
-    
-    st.info("💡 **Solució Ràpida:** Ves al teu Google Sheets i assegura't que les pestanyes (a sota de tot) es diguin exactament:")
-    st.code("Projectes\nConfig_Templates\nSeguiment")
-    
-    # Intentem mostrar què veu el robot per ajudar l'usuari
-    if st.button("🔍 Diagnòstic: Què veu el robot?"):
+    st.error("⚠️ EL SISTEMA NO TROBA LES PESTANYES")
+    st.write("La connexió és correcta, però no trobo 'Projectes' o 'Config_Templates'.")
+    st.info("Comprova que els noms de les pestanyes al Google Sheets siguin exactes i no tinguin espais al final.")
+    if st.button("🔍 Diagnòstic ràpid"):
         try:
-            # Llegim la primera pestanya per defecte per confirmar que hi ha vida
             df_test = conn.read(ttl=0)
-            st.success("Connexió confirmada! El robot veu dades a la primera pestanya.")
-            st.write("Les teves columnes detectades són:", list(df_test.columns))
-            st.write("Si aquestes columnes no són les de 'Projectes', és que el robot no sap on és aquesta pestanya.")
+            st.success("Connexió OK. El robot veu el fitxer.")
+            st.write("Columnes de la primera pestanya:", list(df_test.columns))
         except:
-            st.error("No es pot llegir cap dada. Revisa els permisos d'Editor del correu del JSON.")
+            st.error("No es pot llegir res. Revisa permisos del JSON.")
     st.stop()
 
 # ==========================================
 # 4. INTERFÍCIE D'USUARI
 # ==========================================
-st.markdown("<div class='status-ok'>✅ Sistema connectat amb el Sheets d'Estellé</div>", unsafe_allow_html=True)
+st.markdown("<div class='status-ok'>✅ Sistema connectat amb Estellé Parquet</div>", unsafe_allow_html=True)
 st.title("🏗️ Seguiment d'Obra")
 st.markdown("<div class='subtext'>ESTELLÉ PARQUET</div>", unsafe_allow_html=True)
 
 try:
     col_h1, col_h2 = st.columns(2)
     with col_h1:
-        projecte_sel = st.selectbox("Projecte", projects_df['Nom'].dropna().unique())
+        noms_projectes = projects_df['Nom'].dropna().unique()
+        projecte_sel = st.selectbox("Projecte", noms_projectes)
         dades_proj = projects_df[projects_df['Nom'] == projecte_sel].iloc[0]
     with col_h2:
-        tipus_sel = st.selectbox("Tipus de Treball", templates_df['Tipus'].dropna().unique())
+        tipus_obres = templates_df['Tipus'].dropna().unique()
+        tipus_sel = st.selectbox("Treball", tipus_obres)
         config = templates_df[templates_df['Tipus'] == tipus_sel].iloc[0]
 
     if pd.notna(dades_proj['Logo_Client']) and str(dades_proj['Logo_Client']).startswith("http"):
         st.image(dades_proj['Logo_Client'], width=100)
 
 except Exception as e:
-    st.warning("⚠️ Error en l'estructura: Revisa que la Fila 1 tingui 'Nom', 'Tipus', 'Camp1', etc.")
+    st.warning(f"⚠️ Revisa les columnes del Sheets (Nom, Tipus, Camp1...). Error: {e}")
     st.stop()
 
 with st.form("main_form"):
@@ -98,6 +91,7 @@ with st.form("main_form"):
     c1, c2, c3 = st.columns(3)
     v1, v2, v3 = 0.0, 0.0, 0.0
     
+    # Camps dinàmics segons el template
     with c1:
         if pd.notna(config['Camp1']) and config['Camp1'] != "":
             v1 = st.number_input(f"{config['Camp1']}", min_value=0.0, step=0.1, format="%.1f")
@@ -108,18 +102,18 @@ with st.form("main_form"):
         if pd.notna(config['Camp3']) and config['Camp3'] != "":
             v3 = st.number_input(f"{config['Camp3']}", min_value=0.0, step=0.1, format="%.1f")
             
-    comentaris = st.text_area("Comentaris de la jornada", height=120, placeholder="Ex: S'ha instal·lat fins a la barra...")
+    comentaris = st.text_area("Comentaris de la jornada", height=150, placeholder="Escriu aquí les observacions...")
     responsable = st.text_input("Responsable", value="Luis")
     
     submit = st.form_submit_button("FINALITZAR I ENVIAR INFORME")
 
 # ==========================================
-# 5. ENVIAMENT I REGISTRE
+# 5. PROCESSAMENT FINAL (CORREGIT)
 # ==========================================
 if submit:
-    with st.spinner("Sincronitzant dades..."):
+    with st.spinner("Guardant dades i enviant correu..."):
         try:
-            # 1. Desar al Sheets
+            # 1. ACTUALITZAR GOOGLE SHEETS
             seguiment_df = conn.read(worksheet="Seguiment", ttl=0)
             nova_fila = pd.DataFrame([{
                 "Data": datetime.now().strftime("%d/%m/%Y %H:%M"),
@@ -132,30 +126,30 @@ if submit:
             updated_df = pd.concat([seguiment_df, nova_fila], ignore_index=True)
             conn.update(worksheet="Seguiment", data=updated_df)
             
-            # 2. Enviar Email
-            smtp = st.secrets["smtp"]
+            # 2. ENVIAR EMAIL (Sintaxi corregida aquí)
+            smtp_secrets = st.secrets["smtp"]
             msg = MIMEMultipart()
             msg['Subject'] = f"Informe Obra: {projecte_sel} - {datetime.now().strftime('%d/%m/%Y')}"
-            msg['From'] = f"Estellé Parquet <{smtp['user']}>"
+            msg['From'] = f"Estellé Parquet <{smtp_secrets['user']}>"
             msg['To'] = dades_proj['Emails_Contacte']
 
             html = f"""
             <div style="font-family: Arial, sans-serif; border: 1px solid #6a5acd; border-radius: 12px; overflow: hidden; max-width: 600px; margin: auto; background-color: white;">
                 <div style="background-color: #fdfaf4; padding: 25px; text-align: center; border-bottom: 1px solid #eee;">
                     <img src="{dades_proj['Logo_Client']}" height="50">
-                    <h2 style="color: #6a5acd; margin-top: 15px;">Seguimiento Diario</h2>
+                    <h2 style="color: #6a5acd; margin-top: 15px;">Seguiment Diari</h2>
                 </div>
                 <div style="padding: 30px;">
-                    <p style="color: #999; font-size: 11px; text-transform: uppercase;">Proyecto: {projecte_sel}</p>
-                    <table style="width: 100%; text-align: center;">
+                    <p style="color: #999; font-size: 11px; text-transform: uppercase;">Projecte: {projecte_sel}</p>
+                    <table style="width: 100%; text-align: center; border-collapse: collapse;">
                         <tr>
-                            <td><strong>{v1}</strong><br><small>{config['Camp1']}</small></td>
-                            <td><strong>{v2}</strong><br><small>{config['Camp2']}</small></td>
-                            <td><strong>{v3}</strong><br><small>{config['Camp3']}</small></td>
+                            <td style="padding:10px;"><strong>{v1}</strong><br><small>{config['Camp1']}</small></td>
+                            <td style="padding:10px;"><strong>{v2}</strong><br><small>{config['Camp2']}</small></td>
+                            <td style="padding:10px;"><strong>{v3}</strong><br><small>{config['Camp3']}</small></td>
                         </tr>
                     </table>
                     <div style="margin-top: 20px; padding: 15px; background: #f9f9fb; border-left: 4px solid #6a5acd;">
-                        <strong>COMENTARIOS:</strong><br>{comentaris}
+                        <strong>COMENTARIS:</strong><br>{comentaris}
                     </div>
                 </div>
                 <div style="background: #f4f4f4; padding: 10px; text-align: center; font-size: 11px; color: #aaa;">
@@ -164,11 +158,15 @@ if submit:
             </div>
             """
             msg.attach(MIMEText(html, 'html'))
-            with smtplib.SMTP(smtp['server'], smtp['port']) as s:
-                s.starttls() s.login(smtp['user'], smtp['password']) s.send_message(msg)
+            
+            # Enviament de l'email (Línies separades correctament)
+            with smtplib.SMTP(smtp_secrets['server'], smtp_secrets['port']) as s:
+                s.starttls()
+                s.login(smtp_secrets['user'], smtp_secrets['password'])
+                s.send_message(msg)
 
             st.success("✅ Informe enviat correctament!")
             st.balloons()
             
         except Exception as err:
-            st.error(f"❌ Error final: {err}")
+            st.error(f"❌ Error durant el procés: {err}")

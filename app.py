@@ -11,7 +11,7 @@ from datetime import datetime
 # ==========================================
 st.set_page_config(page_title="Estellé Parquet - Seguiment d'Obra", page_icon="🏗️", layout="centered")
 
-# Injectem CSS per personalitzar la interfície amb el lila corporatiu i fons crema
+# Injectem CSS per personalitzar la interfície
 st.markdown("""
     <style>
     .stApp { background-color: #fdfaf4; }
@@ -38,10 +38,16 @@ try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     
     # Carreguem les dades de configuració
+    # RECORDA: Les pestanyes s'han de dir EXACTAMENT així al Google Sheets
     projects_df = conn.read(worksheet="Projectes")
     templates_df = conn.read(worksheet="Config_Templates")
 except Exception as e:
-    st.error(f"❌ Error de connexió: Verifica els Secrets i el JSON de Google. Detall: {e}")
+    st.error("❌ ERROR DE CONNEXIÓ (404 Not Found)")
+    st.write("Això sol passar per un d'aquests motius:")
+    st.write("1. **ID Incorrecte:** Revisa que la URL del Spreadsheet als Secrets sigui la correcta.")
+    st.write("2. **Permisos:** Has compartit el Google Sheet amb el correu del JSON com a Editor?")
+    st.write("3. **Noms de pestanya:** Tens les pestanyes 'Projectes' i 'Config_Templates' creades?")
+    st.info(f"Detall tècnic: {e}")
     st.stop()
 
 # ==========================================
@@ -53,19 +59,23 @@ st.write("---")
 # Selecció de Projecte i Tipus de Treball
 col_header1, col_header2 = st.columns(2)
 
-with col_header1:
-    projecte_sel = st.selectbox("Selecciona el Projecte", projects_df['Nom'].unique())
-    dades_projecte = projects_df[projects_df['Nom'] == projecte_sel].iloc[0]
+try:
+    with col_header1:
+        projecte_sel = st.selectbox("Selecciona el Projecte", projects_df['Nom'].unique())
+        dades_projecte = projects_df[projects_df['Nom'] == projecte_sel].iloc[0]
 
-with col_header2:
-    tipus_sel = st.selectbox("Tipus de Treball", templates_df['Tipus'].unique())
-    config = templates_df[templates_df['Tipus'] == tipus_sel].iloc[0]
+    with col_header2:
+        tipus_sel = st.selectbox("Tipus de Treball", templates_df['Tipus'].unique())
+        config = templates_df[templates_df['Tipus'] == tipus_sel].iloc[0]
+except Exception as e:
+    st.warning("No s'han pogut carregar els projectes o templates. Revisa que les columnes del Google Sheet siguin correcte.")
+    st.stop()
 
 # Mostrem el logo del client dinàmicament
 if pd.notna(dades_projecte['Logo_Client']):
     st.image(dades_projecte['Logo_Client'], width=120)
 
-st.write("") # Espaiat
+st.write("") 
 
 with st.form("formulari_seguiment"):
     st.subheader(f"Dades de la Jornada: {tipus_sel}")
@@ -91,10 +101,8 @@ if submit:
     with st.spinner("Processant informe..."):
         try:
             # A. GUARDAR DADES AL GOOGLE SHEET
-            # Llegim l'estat actual de la pestanya Seguiment
             seguiment_actual = conn.read(worksheet="Seguiment")
             
-            # Creem la nova fila
             nova_fila = pd.DataFrame([{
                 "Data": datetime.now().strftime("%d/%m/%Y %H:%M"),
                 "Projecte": projecte_sel,
@@ -106,11 +114,10 @@ if submit:
                 "Operari": responsable
             }])
             
-            # Concatenem i actualitzem el Sheet
             updated_df = pd.concat([seguiment_actual, nova_fila], ignore_index=True)
             conn.update(worksheet="Seguiment", data=updated_df)
             
-            # B. ENVIAR EMAIL (DISSENY PREMIUM)
+            # B. ENVIAR EMAIL
             smtp_conf = st.secrets["smtp"]
             
             msg = MIMEMultipart()
@@ -118,7 +125,6 @@ if submit:
             msg['From'] = f"Estellé Parquet <{smtp_conf['user']}>"
             msg['To'] = dades_projecte['Emails_Contacte']
 
-            # Disseny HTML inspirat en la teva captura
             html_content = f"""
             <html>
             <body style="font-family: Arial, sans-serif; background-color: #fdfaf4; padding: 20px; color: #333;">

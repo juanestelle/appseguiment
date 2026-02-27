@@ -6,160 +6,90 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime
 
-# ==========================================
-# 1. CONFIGURACIÓ DE LA PÀGINA I ESTILS
-# ==========================================
-st.set_page_config(page_title="Estellé Parquet - Seguiment", page_icon="🏗️", layout="centered")
+# 1. CONFIGURACIÓ
+st.set_page_config(page_title="Estellé Parquet", layout="centered")
 
 st.markdown("""
     <style>
     .stApp { background-color: #fdfaf4; }
-    .stButton>button { 
-        background-color: #6a5acd; color: white; width: 100%; 
-        border-radius: 8px; height: 3.5em; font-weight: bold; border: none;
-        transition: 0.3s;
-    }
-    .stButton>button:hover { background-color: #4b0082; transform: scale(1.01); }
-    h1 { color: #6a5acd; text-align: center; margin-bottom: 0px; }
-    .subtext { text-align: center; color: #888; font-size: 0.9em; margin-bottom: 30px; letter-spacing: 2px; }
-    .status-ok { background-color: #e6ffed; border: 1px solid #34d399; padding: 10px; border-radius: 8px; color: #065f46; text-align: center; margin-bottom: 20px; }
+    .stButton>button { background-color: #6a5acd; color: white; border-radius: 8px; font-weight: bold; width: 100%; }
+    h1 { color: #6a5acd; text-align: center; }
     </style>
     """, unsafe_allow_html=True)
 
-# ==========================================
-# 2. CONNEXIÓ "SMART" SENSE ERRORS
-# ==========================================
-st.cache_data.clear()
+# 2. CONNEXIÓ NETA
+st.cache_data.clear() # Neteja total de memòria
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-def carregar_dades_robust():
-    try:
-        # Intentem carregar per nom (el mètode estàndard)
-        p_df = conn.read(worksheet="Projectes", ttl=0)
-        t_df = conn.read(worksheet="Config_Templates", ttl=0)
-        return p_df, t_df
-    except:
-        # FALLBACK: Si falla per nom, llegim les pestanyes per defecte
-        # Això soluciona el problema de "Worksheet not found"
-        try:
-            p_df = conn.read(ttl=0) # Primera pestanya (Projectes)
-            # Per a la segona, intentem forçar la lectura de la segona fulla
-            # Si no podem, donem un error guiat
-            t_df = conn.read(worksheet="Config_Templates", ttl=0)
-            return p_df, t_df
-        except Exception as e:
-            st.error(f"⚠️ Error de lectura: {e}")
-            st.stop()
-
-projects_df, templates_df = carregar_dades_robust()
-
-# ==========================================
-# 3. INTERFÍCIE D'USUARI
-# ==========================================
-st.markdown("<div class='status-ok'>✅ Connexió establerta amb Estellé Parquet</div>", unsafe_allow_html=True)
-st.title("🏗️ Seguiment d'Obra")
-st.markdown("<div class='subtext'>ESTELLÉ PARQUET</div>", unsafe_allow_html=True)
-
 try:
-    col_h1, col_h2 = st.columns(2)
-    with col_h1:
-        noms_projectes = projects_df['Nom'].dropna().unique()
-        projecte_sel = st.selectbox("Projecte", noms_projectes)
-        dades_proj = projects_df[projects_df['Nom'] == projecte_sel].iloc[0]
-    
-    with col_h2:
-        tipus_obres = templates_df['Tipus'].dropna().unique()
-        tipus_sel = st.selectbox("Treball", tipus_obres)
-        config = templates_df[templates_df['Tipus'] == tipus_sel].iloc[0]
-
-    if pd.notna(dades_proj['Logo_Client']) and str(dades_proj['Logo_Client']).startswith("http"):
-        st.image(dades_proj['Logo_Client'], width=100)
-
+    # Llegim les dades. Si el nom falla, el sistema s'aturarà aquí amb un missatge clar.
+    df_projectes = conn.read(worksheet="Projectes")
+    df_templates = conn.read(worksheet="Config_Templates")
 except Exception as e:
-    st.warning(f"⚠️ Revisa les columnes del Sheets (Nom, Tipus, Camp1...). Error: {e}")
+    st.error("⚠️ ERROR 400 / LECTURA")
+    st.write("Google no entén la petició. Revisa que:")
+    st.write("1. L'ID als Secrets sigui NOMÉS: `17vINdoX_lvj7Yq89J3SKHU6ISHoGQHYiA_9vtBTKJEA`")
+    st.write("2. Les pestanyes es diguin 'Projectes' i 'Config_Templates' (sense espais).")
     st.stop()
 
-# FORMULARI
-with st.form("main_form"):
-    st.subheader(f"Diari: {tipus_sel}")
-    
-    c1, c2, c3 = st.columns(3)
-    v1, v2, v3 = 0.0, 0.0, 0.0
-    
-    with c1:
-        if pd.notna(config['Camp1']) and config['Camp1'] != "":
-            v1 = st.number_input(f"{config['Camp1']}", min_value=0.0, step=0.1, format="%.1f")
-    with c2:
-        if pd.notna(config['Camp2']) and config['Camp2'] != "":
-            v2 = st.number_input(f"{config['Camp2']}", min_value=0.0, step=0.1, format="%.1f")
-    with c3:
-        if pd.notna(config['Camp3']) and config['Camp3'] != "":
-            v3 = st.number_input(f"{config['Camp3']}", min_value=0.0, step=0.1, format="%.1f")
-            
-    comentaris = st.text_area("Comentaris de la jornada", height=120, placeholder="Ex: S'ha instal·lat fins a la barra...")
-    responsable = st.text_input("Responsable", value="Luis")
-    
-    submit = st.form_submit_button("FINALITZAR I ENVIAR INFORME")
+# 3. INTERFÍCIE
+st.title("🏗️ Seguiment d'Obra")
+st.write("---")
 
-# ==========================================
-# 4. PROCESSAMENT: GUARDAR I ENVIAR
-# ==========================================
-if submit:
-    with st.spinner("Sincronitzant dades..."):
+try:
+    col1, col2 = st.columns(2)
+    with col1:
+        obra = st.selectbox("Projecte", df_projectes['Nom'].unique())
+        c_p = df_projectes[df_projectes['Nom'] == obra].iloc[0]
+    with col2:
+        tipus = st.selectbox("Treball", df_templates['Tipus'].unique())
+        c_t = df_templates[df_templates['Tipus'] == tipus].iloc[0]
+except Exception as e:
+    st.error(f"Error en les columnes del Sheets: {e}")
+    st.stop()
+
+with st.form("enviament"):
+    st.subheader(f"Dades de {tipus}")
+    v1 = st.number_input(f"{c_t['Camp1']}", step=0.1) if pd.notna(c_t['Camp1']) else 0.0
+    v2 = st.number_input(f"{c_t['Camp2']}", step=0.1) if pd.notna(c_t['Camp2']) else 0.0
+    v3 = st.number_input(f"{c_t['Camp3']}", step=0.1) if pd.notna(c_t['Camp3']) else 0.0
+    
+    comentaris = st.text_area("Observacions")
+    operari = st.text_input("Operari", value="Luis")
+    
+    enviar = st.form_submit_button("ENVIAR ARA")
+
+# 4. LÒGICA D'ENVIAMENT
+if enviar:
+    with st.spinner("Treballant..."):
         try:
-            # 1. ACTUALITZAR GOOGLE SHEETS
-            seguiment_df = conn.read(worksheet="Seguiment", ttl=0)
+            # A. Guardar al Sheets (Pestanya Seguiment)
+            df_seguiment = conn.read(worksheet="Seguiment")
             nova_fila = pd.DataFrame([{
-                "Data": datetime.now().strftime("%d/%m/%Y %H:%M"),
-                "Projecte": projecte_sel,
-                "Tipus": tipus_sel,
+                "Data": datetime.now().strftime("%d/%m/%Y"),
+                "Projecte": obra, "Tipus": tipus,
                 "Dada1": v1, "Dada2": v2, "Dada3": v3,
-                "Comentaris": comentaris,
-                "Operari": responsable
+                "Comentaris": comentaris, "Operari": operari
             }])
-            updated_df = pd.concat([seguiment_df, nova_fila], ignore_index=True)
-            conn.update(worksheet="Seguiment", data=updated_df)
-            
-            # 2. ENVIAR EMAIL
-            smtp_secrets = st.secrets["smtp"]
+            updated = pd.concat([df_seguiment, nova_fila], ignore_index=True)
+            conn.update(worksheet="Seguiment", data=updated)
+
+            # B. Email
+            smtp = st.secrets["smtp"]
             msg = MIMEMultipart()
-            msg['Subject'] = f"Informe Obra: {projecte_sel} - {datetime.now().strftime('%d/%m/%Y')}"
-            msg['From'] = f"Estellé Parquet <{smtp_secrets['user']}>"
-            msg['To'] = dades_proj['Emails_Contacte']
-
-            html = f"""
-            <div style="font-family: Arial, sans-serif; border: 1px solid #6a5acd; border-radius: 12px; overflow: hidden; max-width: 600px; margin: auto; background-color: white;">
-                <div style="background-color: #fdfaf4; padding: 25px; text-align: center; border-bottom: 1px solid #eee;">
-                    <img src="{dades_proj['Logo_Client']}" height="50">
-                    <h2 style="color: #6a5acd; margin-top: 15px;">Seguimiento Diario</h2>
-                </div>
-                <div style="padding: 30px;">
-                    <p style="color: #999; font-size: 11px; text-transform: uppercase;">Proyecto: {projecte_sel}</p>
-                    <table style="width: 100%; text-align: center; border-collapse: collapse;">
-                        <tr>
-                            <td style="padding:10px;"><strong>{v1}</strong><br><small>{config.get('Camp1', '')}</small></td>
-                            <td style="padding:10px;"><strong>{v2}</strong><br><small>{config.get('Camp2', '')}</small></td>
-                            <td style="padding:10px;"><strong>{v3}</strong><br><small>{config.get('Camp3', '')}</small></td>
-                        </tr>
-                    </table>
-                    <div style="margin-top: 20px; padding: 15px; background: #f9f9fb; border-left: 4px solid #6a5acd;">
-                        <strong>COMENTARIS:</strong><br>{comentaris}
-                    </div>
-                </div>
-                <div style="background: #f4f4f4; padding: 10px; text-align: center; font-size: 11px; color: #aaa;">
-                    Responsable: {responsable} | Estellé Parquet Digital
-                </div>
-            </div>
-            """
-            msg.attach(MIMEText(html, 'html'))
+            msg['Subject'] = f"Seguiment {obra}"
+            msg['From'] = smtp['user']
+            msg['To'] = c_p['Emails_Contacte']
             
-            with smtplib.SMTP(smtp_secrets['server'], smtp_secrets['port']) as s:
+            cos = f"Projecte: {obra}\nTreball: {tipus}\nMesures: {v1}, {v2}, {v3}\n\nComentaris: {comentaris}"
+            msg.attach(MIMEText(cos, 'plain'))
+            
+            with smtplib.SMTP(smtp['server'], smtp['port']) as s:
                 s.starttls()
-                s.login(smtp_secrets['user'], smtp_secrets['password'])
+                s.login(smtp['user'], smtp['password'])
                 s.send_message(msg)
-
-            st.success("✅ Informe enviat correctament!")
-            st.balloons()
             
-        except Exception as err:
-            st.error(f"❌ Error final: {err}")
+            st.success("Enviat!")
+            st.balloons()
+        except Exception as e:
+            st.error(f"Error en l'enviament: {e}")

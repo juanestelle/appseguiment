@@ -35,15 +35,28 @@ st.markdown("""
 # 2. CONNEXIÓ A DADES (GOOGLE SHEETS)
 # ==========================================
 try:
+    # Creem la connexió usant els secrets de Streamlit
     conn = st.connection("gsheets", type=GSheetsConnection)
     
-    # Llegim les pestanyes (RECORDA: Han d'existir exactament amb aquests noms)
+    # Intentem llegir les pestanyes. 
+    # ATENCIÓ: Si falla aquí amb un 404, és l'ID del Sheet o el permís del correu del JSON.
     projects_df = conn.read(worksheet="Projectes")
     templates_df = conn.read(worksheet="Config_Templates")
 except Exception as e:
-    st.error("❌ ERROR DE CONNEXIÓ AMB EL FULL DE CÀLCUL")
-    st.write("Si veus un error 404, revisa que l'ID del Sheet als Secrets sigui correcte i que hagis compartit el fitxer amb el correu del JSON com a Editor.")
-    st.info(f"Detall de l'error: {e}")
+    st.error("❌ ERROR DE CONNEXIÓ AMB EL FULL DE CÀLCUL (404)")
+    st.markdown(f"""
+    ### Com solucionar-ho ara mateix:
+    1. **L'ID del Spreadsheet:** Revisa que l'ID que has posat als Secrets de Streamlit sigui el correcte. 
+       *És el codi de lletres i números que hi ha a la URL del teu navegador.*
+    2. **Compartir el fitxer:** * Obre el teu fitxer **JSON** (el de la clau de Google).
+       * Busca on diu `"client_email": "nom-del-robot@projecte.iam.gserviceaccount.com"`.
+       * **Copia aquest correu.**
+       * Ves al teu Google Sheet, clica el botó **Compartir** i enganxa aquest correu amb permís d'**Editor**.
+    3. **Noms de les pestanyes:** Verifica que les pestanyes del teu Google Sheet es diguin exactament: 
+       `Projectes`, `Config_Templates` i `Seguiment`.
+    
+    **Detall tècnic de l'error:** `{e}`
+    """)
     st.stop()
 
 # ==========================================
@@ -63,11 +76,11 @@ try:
         tipus_sel = st.selectbox("Tipus de Treball", templates_df['Tipus'].unique())
         config = templates_df[templates_df['Tipus'] == tipus_sel].iloc[0]
 
-    # Mostrem logo si existeix
-    if pd.notna(dades_projecte['Logo_Client']) and dades_projecte['Logo_Client'] != "":
+    # Mostrem el logo del client si la URL és vàlida
+    if pd.notna(dades_projecte['Logo_Client']) and str(dades_projecte['Logo_Client']).startswith("http"):
         st.image(dades_projecte['Logo_Client'], width=120)
 except Exception as e:
-    st.warning("⚠️ No s'han pogut carregar les dades. Revisa les columnes de 'Projectes' i 'Config_Templates'.")
+    st.warning(f"⚠️ Hi ha un problema amb les dades de les pestanyes: {e}")
     st.stop()
 
 st.write("") 
@@ -171,8 +184,8 @@ if submit:
                 server.login(smtp_conf['user'], smtp_conf['password'])
                 server.send_message(msg)
 
-            st.success("✅ Dades guardades i informe enviat!")
+            st.success("✅ Dades guardades i informe enviat amb èxit!")
             st.balloons()
             
         except Exception as err:
-            st.error(f"❌ Error: {err}")
+            st.error(f"❌ Error durant el procés d'enviament: {err}")

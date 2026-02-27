@@ -6,93 +6,172 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime
 
-# 1. CONFIGURACIÓ DE LA PÀGINA
-st.set_page_config(page_title="Estellé Parquet - Seguiment", page_icon="🏗️")
+# ==========================================
+# 1. CONFIGURACIÓ DE LA PÀGINA I ESTILS
+# ==========================================
+st.set_page_config(page_title="Estellé Parquet - Seguiment d'Obra", page_icon="🏗️", layout="centered")
 
-# Estils personalitzats (el lila de la teva marca)
+# Injectem CSS per personalitzar la interfície amb el lila corporatiu i fons crema
 st.markdown("""
     <style>
-    .main { background-color: #fdfaf4; }
-    .stButton>button { background-color: #6a5acd; color: white; width: 100%; }
+    .stApp { background-color: #fdfaf4; }
+    .stButton>button { 
+        background-color: #6a5acd; 
+        color: white; 
+        width: 100%; 
+        border-radius: 8px;
+        height: 3em;
+        font-weight: bold;
+    }
+    .stSelectbox label, .stTextInput label, .stNumberInput label {
+        color: #4b0082;
+        font-weight: bold;
+    }
+    h1 { color: #6a5acd; text-align: center; }
     </style>
-    """, unsafe_allow_status_code=True)
+    """, unsafe_allow_html=True)
 
-# 2. CONNEXIÓ A GOOGLE SHEETS
+# ==========================================
+# 2. CONNEXIÓ A DADES (GOOGLE SHEETS)
+# ==========================================
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     
-    # Llegim les tres pestanyes que hem creat
+    # Carreguem les dades de configuració
     projects_df = conn.read(worksheet="Projectes")
     templates_df = conn.read(worksheet="Config_Templates")
 except Exception as e:
-    st.error(f"Error connectant amb Google Sheets: {e}")
+    st.error(f"❌ Error de connexió: Verifica els Secrets i el JSON de Google. Detall: {e}")
     st.stop()
 
-# 3. INTERFÍCIE D'USUARI
+# ==========================================
+# 3. INTERFÍCIE D'USUARI (FORMULARI)
+# ==========================================
 st.title("🏗️ Seguiment d'Obra")
+st.write("---")
 
-# Selecció de Projecte
-projecte_sel = st.selectbox("Selecciona l'Obra", projects_df['Nom'].unique())
-dades_projecte = projects_df[projects_df['Nom'] == projecte_sel].iloc[0]
+# Selecció de Projecte i Tipus de Treball
+col_header1, col_header2 = st.columns(2)
 
-# Selecció de Template (Parquet, Moqueta, etc.)
-tipus_obra = st.radio("Tipus de treball", templates_df['Tipus'].unique(), horizontal=True)
-config = templates_df[templates_df['Tipus'] == tipus_obra].iloc[0]
+with col_header1:
+    projecte_sel = st.selectbox("Selecciona el Projecte", projects_df['Nom'].unique())
+    dades_projecte = projects_df[projects_df['Nom'] == projecte_sel].iloc[0]
 
-# Mostrem el logo del client si existeix
+with col_header2:
+    tipus_sel = st.selectbox("Tipus de Treball", templates_df['Tipus'].unique())
+    config = templates_df[templates_df['Tipus'] == tipus_sel].iloc[0]
+
+# Mostrem el logo del client dinàmicament
 if pd.notna(dades_projecte['Logo_Client']):
-    st.image(dades_projecte['Logo_Client'], width=150)
+    st.image(dades_projecte['Logo_Client'], width=120)
 
-# 4. FORMULARI DE DADES
-with st.form("diari_obra"):
-    st.subheader(f"Informe de {tipus_obra}")
+st.write("") # Espaiat
+
+with st.form("formulari_seguiment"):
+    st.subheader(f"Dades de la Jornada: {tipus_sel}")
     
-    col1, col2 = st.columns(2)
-    with col1:
-        v1 = st.number_input(f"{config['Camp1']}", min_value=0.0, step=0.1)
-        v3 = st.number_input(f"{config['Camp3']}", min_value=0.0, step=0.1)
-    with col2:
-        v2 = st.number_input(f"{config['Camp2']}", min_value=0.0, step=0.1)
-        responsable = st.text_input("Responsable en obra", value="Luis")
-
-    comentaris = st.text_area("Comentaris de la jornada (incidències, piano, etc.)")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        v1 = st.number_input(f"{config['Camp1']}", min_value=0.0, step=0.1, format="%.1f")
+    with c2:
+        v2 = st.number_input(f"{config['Camp2']}", min_value=0.0, step=0.1, format="%.1f")
+    with c3:
+        v3 = st.number_input(f"{config['Camp3']}", min_value=0.0, step=0.1, format="%.1f")
+        
+    comentaris = st.text_area("Comentaris de la jornada (incidències, estat de l'obra, etc.)", height=150)
+    responsable = st.text_input("Responsable en obra", value="Luis")
     
-    enviar = st.form_submit_button("Finalitzar i enviar informe per Email")
+    st.write("---")
+    submit = st.form_submit_button("FINALITZAR I ENVIAR INFORME")
 
-# 5. LÒGICA D'ENVIAMENT
-if enviar:
-    with st.spinner("Guardant dades i enviant correu..."):
+# ==========================================
+# 4. PROCESSAMENT: GUARDAR I ENVIAR EMAIL
+# ==========================================
+if submit:
+    with st.spinner("Processant informe..."):
         try:
-            # A. Lògica d'Email (usant els Secrets [smtp])
-            smtp_config = st.secrets["smtp"]
+            # A. GUARDAR DADES AL GOOGLE SHEET
+            # Llegim l'estat actual de la pestanya Seguiment
+            seguiment_actual = conn.read(worksheet="Seguiment")
+            
+            # Creem la nova fila
+            nova_fila = pd.DataFrame([{
+                "Data": datetime.now().strftime("%d/%m/%Y %H:%M"),
+                "Projecte": projecte_sel,
+                "Tipus": tipus_sel,
+                "Dada1": v1,
+                "Dada2": v2,
+                "Dada3": v3,
+                "Comentaris": comentaris,
+                "Operari": responsable
+            }])
+            
+            # Concatenem i actualitzem el Sheet
+            updated_df = pd.concat([seguiment_actual, nova_fila], ignore_index=True)
+            conn.update(worksheet="Seguiment", data=updated_df)
+            
+            # B. ENVIAR EMAIL (DISSENY PREMIUM)
+            smtp_conf = st.secrets["smtp"]
             
             msg = MIMEMultipart()
-            msg['Subject'] = f"Seguiment Obra: {projecte_sel} ({datetime.now().strftime('%d/%m/%Y')})"
-            msg['From'] = f"Estellé Parquet <{smtp_config['user']}>"
+            msg['Subject'] = f"Seguiment Obra: {projecte_sel} - {datetime.now().strftime('%d/%m/%Y')}"
+            msg['From'] = f"Estellé Parquet <{smtp_conf['user']}>"
             msg['To'] = dades_projecte['Emails_Contacte']
 
-            html = f"""
-            <div style="font-family: sans-serif; border: 1px solid #6a5acd; padding: 20px; border-radius: 10px;">
-                <h2 style="color: #6a5acd;">Informe Diario - Estellé Parquet</h2>
-                <p><strong>Proyecto:</strong> {projecte_sel}</p>
-                <hr>
-                <p><strong>{config['Camp1']}:</strong> {v1}</p>
-                <p><strong>{config['Camp2']}:</strong> {v2}</p>
-                <p><strong>{config['Camp3']}:</strong> {v3}</p>
-                <p><strong>Comentarios:</strong> {comentaris}</p>
-                <br>
-                <p style="font-size: 0.8em; color: gray;">Responsable: {responsable}</p>
-            </div>
+            # Disseny HTML inspirat en la teva captura
+            html_content = f"""
+            <html>
+            <body style="font-family: Arial, sans-serif; background-color: #fdfaf4; padding: 20px; color: #333;">
+                <div style="max-width: 600px; margin: auto; background: white; border: 1px solid #eee; border-radius: 10px; overflow: hidden;">
+                    <div style="padding: 20px; text-align: center; border-bottom: 1px solid #f0f0f0;">
+                        <img src="{dades_projecte['Logo_Client']}" height="60" style="margin-bottom: 10px;">
+                        <div style="font-size: 12px; color: #999; letter-spacing: 1px;">PROYECTO: {projecte_sel}</div>
+                    </div>
+                    
+                    <div style="padding: 30px;">
+                        <h2 style="color: #6a5acd; text-align: center; font-size: 20px; margin-bottom: 25px;">TRABAJOS</h2>
+                        
+                        <table style="width: 100%; text-align: center; border-collapse: collapse;">
+                            <tr>
+                                <td style="padding: 10px;">
+                                    <span style="font-size: 24px; font-weight: bold; color: #444;">{v1}</span><br>
+                                    <span style="font-size: 13px; color: #888;">{config['Camp1']}</span>
+                                </td>
+                                <td style="padding: 10px;">
+                                    <span style="font-size: 24px; font-weight: bold; color: #444;">{v2}</span><br>
+                                    <span style="font-size: 13px; color: #888;">{config['Camp2']}</span>
+                                </td>
+                                <td style="padding: 10px;">
+                                    <span style="font-size: 24px; font-weight: bold; color: #444;">{v3}</span><br>
+                                    <span style="font-size: 13px; color: #888;">{config['Camp3']}</span>
+                                </td>
+                            </tr>
+                        </table>
+                        
+                        <div style="margin-top: 30px; padding: 20px; background-color: #f9f9fb; border-radius: 5px;">
+                            <strong style="color: #6a5acd; font-size: 14px;">COMENTARIOS DE LA JORNADA:</strong>
+                            <p style="font-size: 14px; line-height: 1.6; color: #555;">{comentaris}</p>
+                        </div>
+                    </div>
+                    
+                    <div style="padding: 20px; background: #fdfaf4; text-align: center; border-top: 1px solid #eee;">
+                        <p style="font-size: 12px; color: #aaa; margin: 0;">Responsable en obra: <strong>{responsable}</strong></p>
+                        <p style="font-size: 10px; color: #ccc; margin-top: 10px;">Generado automáticamente por Estellé Parquet Digital</p>
+                    </div>
+                </div>
+            </body>
+            </html>
             """
-            msg.attach(MIMEText(html, 'html'))
-
-            with smtplib.SMTP(smtp_config['server'], smtp_config['port']) as server:
+            
+            msg.attach(MIMEText(html_content, 'html'))
+            
+            with smtplib.SMTP(smtp_conf['server'], smtp_conf['port']) as server:
                 server.starttls()
-                server.login(smtp_config['user'], smtp_config['password'])
+                server.login(smtp_conf['user'], smtp_conf['password'])
                 server.send_message(msg)
 
-            st.success(f"Informe enviat correctament a {dades_projecte['Emails_Contacte']}")
+            st.success("✅ Dades guardades i informe enviat amb èxit!")
             st.balloons()
             
-        except Exception as e:
-            st.error(f"S'ha produït un error: {e}")
+        except Exception as err:
+            st.error(f"❌ Error durant el procés: {err}")

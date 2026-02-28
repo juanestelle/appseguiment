@@ -2,429 +2,480 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import smtplib
+import base64
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 from datetime import datetime
 
 # ==========================================
-# 1. CONFIGURACIÓ DE PÀGINA
+# 1. CONFIGURACIÓ
 # ==========================================
 st.set_page_config(
-    page_title="Estellé Parquet · Seguiment d'Obra",
-    page_icon="🪵",
-    layout="centered"
+    page_title="Estellé Parquet · Seguiment",
+    page_icon="📋",
+    layout="centered",
+    initial_sidebar_state="collapsed"
 )
 
 # ==========================================
-# 2. ESTILS VISUALS
+# 2. ESTILS — Disseny Tècnic Professional
 # ==========================================
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=DM+Sans:wght@300;400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
 
-/* Reset i base */
+*, *::before, *::after { box-sizing: border-box; }
+
 .stApp {
-    background-color: #F7F2EA;
-    background-image:
-        radial-gradient(ellipse at 20% 50%, rgba(193,154,107,0.08) 0%, transparent 60%),
-        radial-gradient(ellipse at 80% 20%, rgba(139,100,60,0.06) 0%, transparent 50%);
-    font-family: 'DM Sans', sans-serif;
+    background: #0D1117;
+    font-family: 'IBM Plex Sans', sans-serif;
+    color: #E6EDF3;
 }
 
-/* Ocultar elements per defecte de Streamlit */
-#MainMenu, footer, header { visibility: hidden; }
-.block-container { padding-top: 2rem; padding-bottom: 3rem; max-width: 720px; }
+#MainMenu, footer, header, [data-testid="stToolbar"] { visibility: hidden; }
+.block-container { padding: 1.5rem 1rem 4rem; max-width: 700px; }
 
-/* CAPÇALERA */
-.header-block {
-    text-align: center;
-    padding: 2.5rem 1rem 1.5rem;
-    border-bottom: 1px solid rgba(139,100,60,0.2);
-    margin-bottom: 2rem;
-}
-.header-block .logo-icon {
-    font-size: 2.8rem;
-    display: block;
-    margin-bottom: 0.5rem;
-}
-.header-block h1 {
-    font-family: 'Cormorant Garamond', serif;
-    font-size: 2.6rem;
-    font-weight: 700;
-    color: #3D2B1F;
-    letter-spacing: 0.02em;
-    margin: 0;
-    line-height: 1.1;
-}
-.header-block p {
-    font-size: 0.85rem;
-    color: #8B6340;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    margin-top: 0.4rem;
-    font-weight: 500;
-}
-
-/* TARGETES DE SECCIÓ */
-.card {
-    background: rgba(255,253,248,0.85);
-    border: 1px solid rgba(193,154,107,0.25);
-    border-radius: 12px;
-    padding: 1.6rem 1.8rem;
-    margin-bottom: 1.2rem;
-    backdrop-filter: blur(4px);
-    box-shadow: 0 2px 12px rgba(61,43,31,0.06);
-}
-.card-title {
-    font-family: 'Cormorant Garamond', serif;
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: #5C3D2E;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    margin-bottom: 1rem;
+.app-header {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 16px;
+    padding: 20px 24px;
+    background: #161B22;
+    border: 1px solid #30363D;
+    border-radius: 10px;
+    margin-bottom: 20px;
+}
+.app-header-text h1 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: #E6EDF3;
+    margin: 0;
+    letter-spacing: 0.01em;
+}
+.app-header-text p {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    color: #8B949E;
+    margin: 2px 0 0;
+    letter-spacing: 0.05em;
 }
 
-/* LABELS dels inputs */
-.stSelectbox label, .stNumberInput label, .stTextInput label, .stTextArea label {
-    font-family: 'DM Sans', sans-serif !important;
-    font-size: 0.78rem !important;
-    font-weight: 500 !important;
-    color: #7A5C44 !important;
-    letter-spacing: 0.08em !important;
-    text-transform: uppercase !important;
-}
-
-/* INPUTS */
-.stSelectbox > div > div,
-.stTextInput > div > div > input,
-.stNumberInput > div > div > input,
-.stTextArea > div > div > textarea {
-    background-color: #FDFAF5 !important;
-    border: 1px solid rgba(193,154,107,0.35) !important;
-    border-radius: 8px !important;
-    color: #3D2B1F !important;
-    font-family: 'DM Sans', sans-serif !important;
-    font-size: 0.95rem !important;
-}
-.stSelectbox > div > div:focus-within,
-.stTextInput > div > div:focus-within,
-.stNumberInput > div > div:focus-within,
-.stTextArea > div > div:focus-within {
-    border-color: #C19A6B !important;
-    box-shadow: 0 0 0 3px rgba(193,154,107,0.15) !important;
-}
-
-/* BOTÓ PRINCIPAL */
-.stFormSubmitButton > button, .stButton > button {
-    background: linear-gradient(135deg, #8B6340 0%, #C19A6B 100%) !important;
-    color: #FDFAF5 !important;
-    border: none !important;
-    border-radius: 10px !important;
-    padding: 0.8rem 2rem !important;
-    font-family: 'DM Sans', sans-serif !important;
-    font-size: 0.85rem !important;
-    font-weight: 500 !important;
-    letter-spacing: 0.1em !important;
-    text-transform: uppercase !important;
-    width: 100% !important;
-    transition: all 0.2s ease !important;
-    box-shadow: 0 4px 15px rgba(139,100,60,0.3) !important;
-    margin-top: 0.5rem !important;
-}
-.stFormSubmitButton > button:hover, .stButton > button:hover {
-    transform: translateY(-1px) !important;
-    box-shadow: 0 6px 20px rgba(139,100,60,0.4) !important;
-}
-
-/* DIVIDER personalitzat */
-.divider {
-    border: none;
-    border-top: 1px solid rgba(193,154,107,0.2);
-    margin: 1.5rem 0;
-}
-
-/* BADGE de data */
-.date-badge {
-    display: inline-block;
-    background: rgba(193,154,107,0.12);
-    color: #8B6340;
+.equip-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(31,111,235,0.1);
+    border: 1px solid rgba(31,111,235,0.3);
+    color: #58A6FF;
+    padding: 4px 12px;
     border-radius: 20px;
-    padding: 0.25rem 0.75rem;
-    font-size: 0.78rem;
+    font-size: 0.75rem;
+    font-family: 'IBM Plex Mono', monospace;
     font-weight: 500;
     letter-spacing: 0.05em;
-    margin-bottom: 1.5rem;
 }
 
-/* SUCCESS / ERROR */
-.stSuccess {
-    background-color: rgba(139,100,60,0.08) !important;
-    border-color: rgba(139,100,60,0.3) !important;
-    color: #5C3D2E !important;
-    border-radius: 10px !important;
+.section {
+    background: #161B22;
+    border: 1px solid #30363D;
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin-bottom: 14px;
 }
-.stError {
-    border-radius: 10px !important;
+.section-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #21262D;
+}
+.section-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: #8B949E;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin: 0;
+}
+.section-dot { width: 6px; height: 6px; border-radius: 50%; background: #238636; flex-shrink: 0; }
+.section-dot.blue { background: #1F6FEB; }
+.section-dot.amber { background: #D29922; }
+
+.stSelectbox label, .stNumberInput label,
+.stTextInput label, .stTextArea label,
+.stFileUploader label, .stCameraInput label {
+    font-family: 'IBM Plex Sans', sans-serif !important;
+    font-size: 0.75rem !important;
+    font-weight: 500 !important;
+    color: #8B949E !important;
+    letter-spacing: 0.04em !important;
+    text-transform: uppercase !important;
+    margin-bottom: 4px !important;
 }
 
-/* Spinner */
-.stSpinner { color: #C19A6B !important; }
+.stSelectbox > div > div,
+.stTextInput > div > div > input,
+.stTextArea > div > div > textarea {
+    background: #0D1117 !important;
+    border: 1px solid #30363D !important;
+    border-radius: 6px !important;
+    color: #E6EDF3 !important;
+    font-family: 'IBM Plex Sans', sans-serif !important;
+    font-size: 0.9rem !important;
+}
+.stNumberInput > div > div > input {
+    background: #0D1117 !important;
+    border: 1px solid #30363D !important;
+    border-radius: 6px !important;
+    color: #E6EDF3 !important;
+    font-family: 'IBM Plex Mono', monospace !important;
+    font-size: 1rem !important;
+    font-weight: 500 !important;
+}
 
-/* Selector de columnes */
-[data-testid="column"] { gap: 0.8rem; }
+.stFormSubmitButton > button, .stButton > button {
+    background: #238636 !important;
+    color: #FFFFFF !important;
+    border: 1px solid #2EA043 !important;
+    border-radius: 6px !important;
+    padding: 0.6rem 1.5rem !important;
+    font-family: 'IBM Plex Sans', sans-serif !important;
+    font-size: 0.85rem !important;
+    font-weight: 500 !important;
+    width: 100% !important;
+    margin-top: 8px !important;
+}
+
+.login-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 4rem 1rem;
+}
+.login-card {
+    background: #161B22;
+    border: 1px solid #30363D;
+    border-radius: 12px;
+    padding: 2.5rem 2rem;
+    width: 100%;
+    max-width: 340px;
+    text-align: center;
+}
+.login-card h2 { font-size: 1.2rem; font-weight: 600; color: #E6EDF3; margin: 0 0 4px; }
+.login-card p { font-size: 0.7rem; color: #8B949E; margin: 0 0 1.5rem; font-family: 'IBM Plex Mono', monospace; letter-spacing: 1px; }
+
+.success-banner {
+    background: rgba(35,134,54,0.1);
+    border: 1px solid #238636;
+    border-radius: 8px;
+    padding: 16px 20px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-top: 12px;
+}
+.success-banner .icon { font-size: 1.1rem; flex-shrink: 0; margin-top: 2px; }
+.success-banner h4 { margin: 0 0 4px; font-size: 0.9rem; color: #3FB950; font-weight: 600; }
+.success-banner p  { margin: 0; font-size: 0.75rem; color: #8B949E; font-family: 'IBM Plex Mono', monospace; }
+
+.data-badge {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    color: #8B949E;
+    background: #0D1117;
+    border: 1px solid #21262D;
+    border-radius: 4px;
+    padding: 3px 8px;
+    display: inline-block;
+    margin-bottom: 14px;
+}
 </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 3. CAPÇALERA
-# ==========================================
-st.markdown("""
-<div class="header-block">
-    <span class="logo-icon">🪵</span>
-    <h1>Estellé Parquet</h1>
-    <p>Sistema de Seguiment d'Obra</p>
-</div>
-""", unsafe_allow_html=True)
-
-# Badge de data actual
-st.markdown(f"""
-<div style="text-align:center">
-    <span class="date-badge">📅 {datetime.now().strftime("%A, %d de %B de %Y").capitalize()}</span>
-</div>
-""", unsafe_allow_html=True)
-
-# ==========================================
-# 4. CONNEXIÓ GOOGLE SHEETS
+# 3. CONNEXIÓ
 # ==========================================
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 try:
-    df_projectes = conn.read(worksheet="Projectes", ttl=0)
-    df_templates = conn.read(worksheet="Config_Templates", ttl=0)
+    df_projectes = conn.read(worksheet="Projectes", ttl=0).dropna(subset=['Nom'])
+    df_templates = conn.read(worksheet="Config_Templates", ttl=0).dropna(subset=['Tipus'])
+    df_equips    = conn.read(worksheet="Equips", ttl=0).dropna(subset=['Equip'])
 except Exception as e:
-    st.error("⚠️ No s'ha pogut connectar amb Google Sheets")
-    with st.expander("Veure detall de l'error"):
+    st.error("No s'ha pogut connectar amb Google Sheets")
+    with st.expander("Detall de l'error"):
         st.code(str(e))
+    st.stop()
+
+# ==========================================
+# 4. AUTENTICACIÓ PER PIN
+# ==========================================
+if 'equip_autenticat' not in st.session_state:
+    st.session_state.equip_autenticat = None
+
+if st.session_state.equip_autenticat is None:
+    st.markdown('<div class="login-wrap">', unsafe_allow_html=True)
     st.markdown("""
-    **Comprova:**
-    - Que el `secrets.toml` té el format correcte
-    - Que el compte de servei té accés **Editor** al document
-    - Que els noms de les pestanyes són exactament `Projectes` i `Config_Templates`
-    """)
+    <div class="login-card">
+        <h2>Estellé Parquet</h2>
+        <p>SISTEMA DE SEGUIMENT D'OBRA</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    with st.form("login_form"):
+        pin_input = st.text_input("PIN d'equip", type="password", placeholder="····")
+        login_btn = st.form_submit_button("Accedir")
+
+    if login_btn:
+        pin_match = df_equips[df_equips['PIN'].astype(str).str.strip() == pin_input.strip()]
+        if not pin_match.empty:
+            st.session_state.equip_autenticat = pin_match.iloc[0]['Equip']
+            st.rerun()
+        else:
+            st.error("PIN incorrecte. Consulta el teu responsable.")
+    st.markdown('</div>', unsafe_allow_html=True)
+    st.stop()
+
+equip_actual = st.session_state.equip_autenticat
+
+# ==========================================
+# 5. FILTRAR PROJECTES PER EQUIP
+# ==========================================
+if 'Equip' in df_projectes.columns:
+    df_proj = df_projectes[
+        (df_projectes['Equip'].isna()) |
+        (df_projectes['Equip'].astype(str).str.strip() == '') |
+        (df_projectes['Equip'].astype(str).str.strip() == equip_actual)
+    ]
+else:
+    df_proj = df_projectes
+
+if df_proj.empty:
+    st.warning("No hi ha projectes assignats a aquest equip.")
     st.stop()
 
 # ==========================================
-# 5. SELECTORS DE PROJECTE I TREBALL
+# 6. CAPÇALERA
 # ==========================================
-try:
-    df_projectes = df_projectes.dropna(subset=['Nom'])
-    df_templates = df_templates.dropna(subset=['Tipus'])
-except Exception as e:
-    st.error(f"Error en l'estructura de les dades: {e}")
-    st.stop()
+st.markdown(f"""
+<div class="app-header">
+    <div class="app-header-text">
+        <h1>Estellé Parquet</h1>
+        <p>SEGUIMENT D'OBRA · {equip_actual.upper()}</p>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
-st.markdown('<div class="card"><div class="card-title">📋 Selecció</div>', unsafe_allow_html=True)
+col_eq, col_out = st.columns([4, 1])
+with col_eq:
+    st.markdown(f'<div class="equip-badge">⬡ {equip_actual}</div>', unsafe_allow_html=True)
+with col_out:
+    if st.button("Sortir"):
+        st.session_state.equip_autenticat = None
+        st.rerun()
+
+st.markdown(f'<div class="data-badge">{datetime.now().strftime("%d/%m/%Y · %H:%M")}</div>', unsafe_allow_html=True)
+
+# ==========================================
+# 7. SELECCIÓ
+# ==========================================
+st.markdown('<div class="section"><div class="section-header"><div class="section-dot blue"></div><p class="section-title">Assignació</p></div>', unsafe_allow_html=True)
 
 col1, col2 = st.columns(2)
 with col1:
-    obra_sel = st.selectbox("Projecte", df_projectes['Nom'].unique())
-    dades_p = df_projectes[df_projectes['Nom'] == obra_sel].iloc[0]
+    obra_sel = st.selectbox("Projecte", df_proj['Nom'].unique())
+    dades_p  = df_proj[df_proj['Nom'] == obra_sel].iloc[0]
 with col2:
     tipus_sel = st.selectbox("Tipus de treball", df_templates['Tipus'].unique())
-    dades_t = df_templates[df_templates['Tipus'] == tipus_sel].iloc[0]
+    dades_t   = df_templates[df_templates['Tipus'] == tipus_sel].iloc[0]
+
+# Logo del client
+logo_url = str(dades_p.get('Logo_client', '')).strip()
+if logo_url.startswith('http'):
+    st.markdown(f"""
+    <div style="margin-top:12px;padding:10px 14px;background:#0D1117;border:1px solid #21262D;
+                border-radius:8px;display:flex;align-items:center;gap:12px">
+        <img src="{logo_url}" style="height:30px;width:auto;object-fit:contain">
+        <span style="font-size:0.75rem;color:#8B949E;font-family:'IBM Plex Mono',monospace">{obra_sel}</span>
+    </div>
+    """, unsafe_allow_html=True)
 
 st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
-# 6. FORMULARI D'INFORME
+# 8. FORMULARI
 # ==========================================
-st.markdown(f'<div class="card"><div class="card-title">📝 Informe · {tipus_sel}</div>', unsafe_allow_html=True)
+st.markdown('<div class="section"><div class="section-header"><div class="section-dot amber"></div><p class="section-title">Dades de la jornada</p></div>', unsafe_allow_html=True)
 
 with st.form("form_obra", clear_on_submit=True):
 
-    # Camps dinàmics segons template
     camps_actius = []
-    for i, camp_key in enumerate(['Camp1', 'Camp2', 'Camp3'], 1):
-        val = dades_t.get(camp_key, "")
-        if pd.notna(val) and str(val).strip() != "":
-            camps_actius.append((camp_key, str(val)))
+    for ck in ['Camp1', 'Camp2', 'Camp3']:
+        v = dades_t.get(ck, "")
+        if pd.notna(v) and str(v).strip():
+            camps_actius.append(str(v))
 
+    valors = [0.0, 0.0, 0.0]
     if camps_actius:
-        cols = st.columns(len(camps_actius))
-        valors = []
-        for idx, (_, nom_camp) in enumerate(camps_actius):
-            with cols[idx]:
-                v = st.number_input(nom_camp, min_value=0.0, step=0.1, format="%.2f")
-                valors.append(v)
-        # Omplim els que no s'usen
-        while len(valors) < 3:
-            valors.append(0.0)
-        v1, v2, v3 = valors[0], valors[1], valors[2]
-    else:
-        v1, v2, v3 = 0.0, 0.0, 0.0
+        cols_n = st.columns(len(camps_actius))
+        for idx, nom in enumerate(camps_actius):
+            with cols_n[idx]:
+                valors[idx] = st.number_input(nom, min_value=0.0, step=0.1, format="%.2f")
 
-    st.markdown('<hr class="divider">', unsafe_allow_html=True)
+    v1, v2, v3 = valors
 
-    comentaris = st.text_area(
-        "Comentaris de la jornada",
-        placeholder="Descriu el treball realitzat, incidències, observacions...",
-        height=100
-    )
-    operari = st.text_input("Operari responsable", value="Luis")
+    comentaris = st.text_area("Observacions", placeholder="Treball realitzat, incidències, material...", height=85)
+    operari    = st.text_input("Operari responsable", value="Luis")
 
-    subm = st.form_submit_button("✉️ Enviar Informe")
+    st.markdown("<div style='margin-top:6px'></div>", unsafe_allow_html=True)
+
+    tab_cam, tab_gal = st.tabs(["📷  Càmera", "🖼  Galeria"])
+    with tab_cam:
+        foto_camera = st.camera_input("Fer foto", label_visibility="collapsed")
+    with tab_gal:
+        fotos_fitxer = st.file_uploader(
+            "Selecciona imatges",
+            type=["jpg", "jpeg", "png", "webp"],
+            accept_multiple_files=True,
+            label_visibility="collapsed"
+        )
+
+    subm = st.form_submit_button("▶  Enviar informe")
 
 st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
-# 7. ENVIAMENT
+# 9. ENVIAMENT
 # ==========================================
 if subm:
     if not operari.strip():
-        st.warning("⚠️ Cal indicar l'operari responsable.")
+        st.warning("Cal indicar l'operari responsable.")
         st.stop()
+
+    totes_fotos = []
+    if foto_camera:
+        totes_fotos.append(("foto_camera.jpg", foto_camera.getvalue(), "image/jpeg"))
+    if fotos_fitxer:
+        for f in fotos_fitxer:
+            totes_fotos.append((f.name, f.getvalue(), f.type))
 
     with st.spinner("Enviant informe..."):
         errors = []
 
-        # A. Guardar a Sheets
+        # A. Sheets
         try:
             try:
-                df_seg = conn.read(worksheet="Seguiment", ttl=0)
-                df_seg = df_seg.dropna(how='all')
+                df_seg = conn.read(worksheet="Seguiment", ttl=0).dropna(how='all')
             except Exception:
                 df_seg = pd.DataFrame(columns=[
-                    "Data", "Projecte", "Tipus",
-                    "Dada1", "Dada2", "Dada3",
-                    "Comentaris", "Operari"
+                    "Data","Hora","Equip","Projecte","Tipus",
+                    "Dada1","Dada2","Dada3","Comentaris","Operari","Fotos"
                 ])
 
-            nova_fila = pd.DataFrame([{
+            nova = pd.DataFrame([{
                 "Data": datetime.now().strftime("%d/%m/%Y"),
                 "Hora": datetime.now().strftime("%H:%M"),
+                "Equip": equip_actual,
                 "Projecte": obra_sel,
                 "Tipus": tipus_sel,
-                "Dada1": v1,
-                "Dada2": v2,
-                "Dada3": v3,
+                "Dada1": v1, "Dada2": v2, "Dada3": v3,
                 "Comentaris": comentaris,
-                "Operari": operari
+                "Operari": operari,
+                "Fotos": len(totes_fotos)
             }])
-
-            df_final = pd.concat([df_seg, nova_fila], ignore_index=True)
-            conn.update(worksheet="Seguiment", data=df_final)
-
+            conn.update(worksheet="Seguiment", data=pd.concat([df_seg, nova], ignore_index=True))
         except Exception as e:
-            errors.append(f"Error en guardar al Sheets: {e}")
+            errors.append(f"Sheets: {e}")
 
-        # B. Enviar email
+        # B. Email
         try:
-            smtp = st.secrets["smtp"]
-            emails_raw = str(dades_p.get('Emails_Contacte', ''))
+            smtp_cfg    = st.secrets["smtp"]
+            emails_raw  = str(dades_p.get('Emails_Contacte', ''))
             destinataris = [e.strip() for e in emails_raw.split(',') if e.strip()]
 
             if destinataris:
-                msg = MIMEMultipart('alternative')
-                msg['Subject'] = f"[Estellé] Seguiment {obra_sel} · {datetime.now().strftime('%d/%m/%Y')}"
-                msg['From'] = f"Estellé Parquet <{smtp['user']}>"
-                msg['To'] = ", ".join(destinataris)
+                msg = MIMEMultipart('mixed')
+                msg['Subject'] = f"[Seguiment] {obra_sel} · {tipus_sel} · {datetime.now().strftime('%d/%m/%Y')}"
+                msg['From']    = f"Estellé Parquet <{smtp_cfg['user']}>"
+                msg['To']      = ", ".join(destinataris)
 
-                # Construir resum de dades
-                resum_dades = ""
-                for idx, (_, nom_camp) in enumerate(camps_actius):
-                    val_camp = [v1, v2, v3][idx]
-                    resum_dades += f"<tr><td style='padding:6px 12px;color:#7A5C44;font-size:13px'>{nom_camp}</td><td style='padding:6px 12px;font-weight:600;color:#3D2B1F'>{val_camp}</td></tr>"
+                files_m = ""
+                for idx, nom in enumerate(camps_actius):
+                    files_m += f"""<tr>
+                        <td style="padding:8px 16px;border-bottom:1px solid #21262D;color:#8B949E;font-size:12px;font-family:monospace">{nom}</td>
+                        <td style="padding:8px 16px;border-bottom:1px solid #21262D;color:#E6EDF3;font-size:14px;font-family:monospace;font-weight:600;text-align:right">{[v1,v2,v3][idx]}</td>
+                    </tr>"""
 
-                html = f"""
-                <!DOCTYPE html>
-                <html>
-                <body style="margin:0;padding:0;background:#F7F2EA;font-family:'Helvetica Neue',sans-serif">
-                <table width="100%" cellpadding="0" cellspacing="0" style="background:#F7F2EA;padding:30px 0">
-                <tr><td align="center">
-                <table width="580" cellpadding="0" cellspacing="0" style="background:#FDFAF5;border-radius:14px;overflow:hidden;box-shadow:0 4px 20px rgba(61,43,31,0.1)">
+                logo_h = f'<img src="{logo_url}" style="height:26px;width:auto;margin-bottom:4px"><br>' if logo_url.startswith('http') else ''
+                obs_h  = f'<tr><td colspan="2" style="padding:14px 16px"><div style="background:#161B22;border-left:3px solid #238636;padding:10px 12px;border-radius:0 6px 6px 0;color:#C9D1D9;font-size:13px;line-height:1.6">{comentaris}</div></td></tr>' if comentaris.strip() else ''
+                foto_h = f'<tr><td colspan="2" style="padding:10px 16px;color:#58A6FF;font-size:12px;font-family:monospace">📎 {len(totes_fotos)} imatge(s) adjuntada(s)</td></tr>' if totes_fotos else ''
 
-                    <!-- Header -->
-                    <tr><td style="background:linear-gradient(135deg,#8B6340,#C19A6B);padding:28px 32px;text-align:center">
-                        <div style="font-size:28px">🪵</div>
-                        <h1 style="color:#FDFAF5;font-size:22px;margin:6px 0 2px;font-weight:700;letter-spacing:1px">Estellé Parquet</h1>
-                        <p style="color:rgba(253,250,245,0.8);font-size:11px;letter-spacing:2px;text-transform:uppercase;margin:0">Seguiment d'Obra</p>
-                    </td></tr>
-
-                    <!-- Info principal -->
-                    <tr><td style="padding:28px 32px 16px">
-                        <table width="100%" cellpadding="0" cellspacing="0">
-                        <tr>
-                            <td width="50%" style="padding-bottom:16px">
-                                <div style="font-size:10px;color:#8B6340;letter-spacing:2px;text-transform:uppercase;margin-bottom:4px">Projecte</div>
-                                <div style="font-size:17px;font-weight:700;color:#3D2B1F">{obra_sel}</div>
-                            </td>
-                            <td width="50%" style="padding-bottom:16px">
-                                <div style="font-size:10px;color:#8B6340;letter-spacing:2px;text-transform:uppercase;margin-bottom:4px">Treball</div>
-                                <div style="font-size:17px;font-weight:700;color:#3D2B1F">{tipus_sel}</div>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>
-                                <div style="font-size:10px;color:#8B6340;letter-spacing:2px;text-transform:uppercase;margin-bottom:4px">Data</div>
-                                <div style="font-size:15px;color:#5C3D2E">{datetime.now().strftime('%d/%m/%Y · %H:%M')}</div>
-                            </td>
-                            <td>
-                                <div style="font-size:10px;color:#8B6340;letter-spacing:2px;text-transform:uppercase;margin-bottom:4px">Operari</div>
-                                <div style="font-size:15px;color:#5C3D2E">{operari}</div>
-                            </td>
-                        </tr>
-                        </table>
-                    </td></tr>
-
-                    <!-- Dades mesures -->
-                    {f'''
-                    <tr><td style="padding:0 32px 16px">
-                        <div style="background:#F7F2EA;border-radius:10px;overflow:hidden">
-                        <div style="padding:10px 12px;background:rgba(193,154,107,0.15);font-size:10px;color:#8B6340;letter-spacing:2px;text-transform:uppercase;font-weight:600">Mesures</div>
-                        <table width="100%" cellpadding="0" cellspacing="0">
-                        {resum_dades}
-                        </table></div>
-                    </td></tr>
-                    ''' if resum_dades else ''}
-
-                    <!-- Comentaris -->
-                    {f'''
-                    <tr><td style="padding:0 32px 24px">
-                        <div style="font-size:10px;color:#8B6340;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px">Comentaris</div>
-                        <div style="background:#F7F2EA;border-left:3px solid #C19A6B;padding:12px 16px;border-radius:0 8px 8px 0;color:#3D2B1F;font-size:14px;line-height:1.6">{comentaris}</div>
-                    </td></tr>
-                    ''' if comentaris.strip() else ''}
-
-                    <!-- Footer -->
-                    <tr><td style="background:#3D2B1F;padding:16px 32px;text-align:center">
-                        <p style="color:rgba(253,250,245,0.5);font-size:11px;margin:0;letter-spacing:1px">Estellé Parquet · Sistema Automatitzat de Seguiment</p>
-                    </td></tr>
-
-                </table>
-                </td></tr>
-                </table>
-                </body>
-                </html>
-                """
+                html = f"""<!DOCTYPE html><html><body style="margin:0;padding:0;background:#0D1117;font-family:'Helvetica Neue',sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#0D1117;padding:24px 0"><tr><td align="center">
+<table width="540" cellpadding="0" cellspacing="0" style="background:#161B22;border:1px solid #30363D;border-radius:10px;overflow:hidden">
+<tr><td style="padding:20px 16px;border-bottom:1px solid #21262D">
+    {logo_h}
+    <table width="100%"><tr>
+        <td><div style="font-size:15px;font-weight:600;color:#E6EDF3">Informe de Seguiment</div>
+            <div style="font-size:11px;color:#8B949E;font-family:monospace;margin-top:2px">{obra_sel.upper()} · {tipus_sel.upper()}</div></td>
+        <td style="text-align:right"><div style="font-size:11px;color:#8B949E;font-family:monospace">{datetime.now().strftime('%d/%m/%Y · %H:%M')}</div></td>
+    </tr></table>
+</td></tr>
+<tr><td><table width="100%">
+<tr>
+    <td width="50%" style="padding:12px 16px;border-right:1px solid #21262D;border-bottom:1px solid #21262D">
+        <div style="font-size:9px;color:#8B949E;letter-spacing:2px;text-transform:uppercase;font-family:monospace;margin-bottom:3px">Equip</div>
+        <div style="font-size:14px;color:#E6EDF3;font-weight:500">{equip_actual}</div>
+    </td>
+    <td width="50%" style="padding:12px 16px;border-bottom:1px solid #21262D">
+        <div style="font-size:9px;color:#8B949E;letter-spacing:2px;text-transform:uppercase;font-family:monospace;margin-bottom:3px">Operari</div>
+        <div style="font-size:14px;color:#E6EDF3;font-weight:500">{operari}</div>
+    </td>
+</tr>
+{files_m}
+{obs_h}
+{foto_h}
+</table></td></tr>
+<tr><td style="padding:12px 16px;border-top:1px solid #21262D;text-align:center">
+    <div style="font-size:9px;color:#484F58;font-family:monospace;letter-spacing:1px">ESTELLÉ PARQUET · SISTEMA AUTOMATITZAT DE SEGUIMENT</div>
+</td></tr>
+</table></td></tr></table></body></html>"""
 
                 msg.attach(MIMEText(html, 'html'))
 
-                with smtplib.SMTP(smtp['server'], smtp['port']) as s:
+                for nom_f, contingut, mime_type in totes_fotos:
+                    parts = mime_type.split('/')
+                    adjunt = MIMEBase(parts[0], parts[1] if len(parts) > 1 else 'octet-stream')
+                    adjunt.set_payload(contingut)
+                    encoders.encode_base64(adjunt)
+                    adjunt.add_header('Content-Disposition', 'attachment', filename=nom_f)
+                    msg.attach(adjunt)
+
+                with smtplib.SMTP(smtp_cfg['server'], smtp_cfg['port']) as s:
                     s.starttls()
-                    s.login(smtp['user'], smtp['password'])
-                    s.sendmail(smtp['user'], destinataris, msg.as_string())
+                    s.login(smtp_cfg['user'], smtp_cfg['password'])
+                    s.sendmail(smtp_cfg['user'], destinataris, msg.as_string())
 
         except Exception as e:
-            errors.append(f"Error en l'enviament d'email: {e}")
+            errors.append(f"Email: {e}")
 
-        # Resultat final
-        if not errors:
-            st.success("✅ Informe enviat i guardat correctament!")
-            st.balloons()
-        else:
-            for err in errors:
-                st.error(err)
+    # Resultat
+    if not errors:
+        fotos_txt = f"{len(totes_fotos)} foto(s) adjuntada(s)" if totes_fotos else "Sense fotografies"
+        st.markdown(f"""
+        <div class="success-banner">
+            <div class="icon">✔</div>
+            <div>
+                <h4>Informe registrat correctament</h4>
+                <p>{obra_sel} · {tipus_sel} · {datetime.now().strftime('%d/%m/%Y %H:%M')} · {fotos_txt}</p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        for err in errors:
+            st.error(err)

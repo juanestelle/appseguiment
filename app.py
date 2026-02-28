@@ -1,7 +1,9 @@
 import smtplib
+import urllib.request
+import base64
 from datetime import datetime
 from io import BytesIO
-from typing import Tuple
+from typing import Tuple, Optional
 
 import pandas as pd
 import streamlit as st
@@ -14,10 +16,10 @@ from streamlit_gsheets import GSheetsConnection
 from streamlit_drawable_canvas import st_canvas
 
 # ==========================================
-# 1. CONFIGURACIÓ
+# 1. CONFIGURACIÓN
 # ==========================================
 st.set_page_config(
-    page_title="Estellé Parquet · Seguiment",
+    page_title="Estellé Parquet · Seguimiento",
     page_icon="🪵",
     layout="centered"
 )
@@ -39,13 +41,14 @@ st.markdown("""
     font-family: 'Inter', sans-serif;
 }
 
+/* Capçalera equip */
 .team-header {
     background: var(--soft-white);
     border: 1px solid #efebe9;
     padding: 22px 20px;
     border-radius: 20px;
     text-align: center;
-    margin-bottom: 22px;
+    margin-bottom: 18px;
     box-shadow: 0 4px 15px rgba(0,0,0,0.03);
 }
 .team-header h1 {
@@ -66,6 +69,7 @@ st.markdown("""
     font-size: 0.78rem;
 }
 
+/* Panel genèric */
 .panel {
     background: white;
     border: 1px solid #e0d7d0;
@@ -91,7 +95,8 @@ st.markdown("""
     background: #fafafa;
 }
 
-.stButton > button {
+/* Botó principal */
+.stFormSubmitButton > button {
     background: var(--wood) !important;
     color: white !important;
     border-radius: 12px !important;
@@ -102,8 +107,16 @@ st.markdown("""
     width: 100% !important;
     font-size: 0.9rem !important;
 }
-.stButton > button:hover {
-    background: #6d4c41 !important;
+
+/* Botó secundari (Salir) */
+.stButton > button {
+    background: transparent !important;
+    color: var(--accent) !important;
+    border: 1px solid #d7ccc8 !important;
+    border-radius: 8px !important;
+    font-size: 0.78rem !important;
+    padding: 0.4rem 0.8rem !important;
+    width: auto !important;
 }
 
 .success-box {
@@ -119,12 +132,16 @@ st.markdown("""
 .success-box h4 { margin: 0 0 4px; color: #2e7d32; font-size: 0.95rem; }
 .success-box p  { margin: 0; color: #555; font-size: 0.78rem; }
 
+/* Amagar elements Streamlit innecessaris */
 #MainMenu, footer, header { visibility: hidden; }
+
+/* Tabs sense fons blanc extra */
+.stTabs [data-baseweb="tab-list"] { background: transparent !important; }
 </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. FUNCIONS
+# 2. FUNCIONES
 # ==========================================
 def norm_pin(v: str) -> str:
     return str(v).strip().split(".")[0]
@@ -138,30 +155,48 @@ def sanitize_image(name: str, content: bytes) -> Tuple[str, bytes, str]:
     img.save(out, format="JPEG", quality=85)
     return f"{name}.jpg", out.getvalue(), "image/jpeg"
 
-def canvas_to_bytes(canvas_resp) -> bytes | None:
-    """Converteix el canvas a bytes JPEG si s'ha signat."""
-    if canvas_resp is None or canvas_resp.image_data is None:
+def canvas_to_bytes(canvas_result) -> Optional[bytes]:
+    if canvas_result is None or canvas_result.image_data is None:
         return None
-    img = Image.fromarray(canvas_resp.image_data.astype("uint8"), "RGBA")
+    img = Image.fromarray(canvas_result.image_data.astype("uint8"), "RGBA")
     img = img.convert("RGB")
     out = BytesIO()
     img.save(out, format="JPEG", quality=90)
     return out.getvalue()
 
+def logo_a_base64(url: str) -> Optional[str]:
+    """Descarrega el logo i el converteix a base64 per embeure'l a l'email."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            data = r.read()
+        ext = url.split(".")[-1].lower().split("?")[0]
+        mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                "gif": "image/gif", "svg": "image/svg+xml"}.get(ext, "image/png")
+        b64 = base64.b64encode(data).decode()
+        return f"data:{mime};base64,{b64}"
+    except Exception:
+        return None
+
+def fmt_valor(v) -> str:
+    """Mostra enter si no té decimals, decimal si en té."""
+    if v is None:
+        return "0"
+    f = float(v)
+    return str(int(f)) if f == int(f) else f"{f:.1f}"
+
 # ==========================================
-# 3. CONNEXIÓ SHEETS
+# 3. CONEXIÓN SHEETS
 # ==========================================
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 try:
-    # ttl=300 → les dades es cachegen 5 minuts (evita el límit de 60 req/min de Google)
-    # Només el Seguiment (escriptura) s'ha de llegir fresc → ttl=0 però només al moment d'enviar
     df_projectes = conn.read(worksheet="Projectes",        ttl=300).dropna(subset=["Nom"])
     df_templates = conn.read(worksheet="Config_Templates", ttl=300).dropna(subset=["Tipus"])
     df_equips    = conn.read(worksheet="Equips",           ttl=300).dropna(subset=["Equip"])
 except Exception as e:
-    st.error("Error de connexió amb Google Sheets.")
-    with st.expander("Detall"):
+    st.error("Error de conexión con Google Sheets.")
+    with st.expander("Detalle"):
         st.code(str(e))
     st.stop()
 
@@ -172,25 +207,25 @@ if "auth_user" not in st.session_state:
     st.markdown("""
     <div class="team-header">
         <h1>Estellé Parquet</h1>
-        <p>Accés Instal·ladors</p>
+        <p>Acceso Instaladores</p>
     </div>
     """, unsafe_allow_html=True)
 
     with st.form("login"):
-        pin_in = st.text_input("PIN d'Equip", type="password", placeholder="····")
+        pin_in = st.text_input("PIN de Equipo", type="password", placeholder="····")
         if st.form_submit_button("ENTRAR"):
             match = df_equips[df_equips["PIN"].apply(norm_pin) == norm_pin(pin_in)]
             if not match.empty:
                 st.session_state.auth_user = match.iloc[0]["Equip"]
                 st.rerun()
             else:
-                st.error("PIN incorrecte. Consulta el teu responsable.")
+                st.error("PIN incorrecto. Consulta a tu responsable.")
     st.stop()
 
 equip_actual = st.session_state.auth_user
 
 # ==========================================
-# 5. FILTRAR PROJECTES PER EQUIP
+# 5. FILTRAR PROYECTOS POR EQUIPO
 # ==========================================
 if "Equip" in df_projectes.columns:
     df_proj = df_projectes[
@@ -202,11 +237,11 @@ else:
     df_proj = df_projectes
 
 if df_proj.empty:
-    st.warning("No hi ha projectes assignats a aquest equip.")
+    st.warning("No hay proyectos asignados a este equipo.")
     st.stop()
 
 # ==========================================
-# 6. CAPÇALERA
+# 6. CABECERA — sin panel blanco extra
 # ==========================================
 col_hd, col_out = st.columns([5, 1])
 with col_hd:
@@ -217,40 +252,41 @@ with col_hd:
     </div>
     """, unsafe_allow_html=True)
 with col_out:
-    st.markdown("<div style='margin-top:18px'>", unsafe_allow_html=True)
-    if st.button("Sortir"):
+    st.markdown("<div style='margin-top:22px'>", unsafe_allow_html=True)
+    if st.button("Salir"):
         del st.session_state["auth_user"]
         st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ==========================================
-# 7. SELECCIÓ (fora del form — correcte)
+# 7. SELECCIÓN — directamente sin panel encima
 # ==========================================
-st.markdown('<div class="panel">', unsafe_allow_html=True)
 col_a, col_b = st.columns(2)
-obra_sel  = col_a.selectbox("Projecte", df_proj["Nom"].unique())
-tipus_sel = col_b.selectbox("Treball realitzat", df_templates["Tipus"].unique())
+obra_sel  = col_a.selectbox("Proyecto", df_proj["Nom"].unique())
+tipus_sel = col_b.selectbox("Trabajo realizado", df_templates["Tipus"].unique())
 
 dades_p = df_proj[df_proj["Nom"] == obra_sel].iloc[0]
 dades_t = df_templates[df_templates["Tipus"] == tipus_sel].iloc[0]
 
-# Logo client
+# Logo cliente (solo si existe URL)
 logo_url = str(dades_p.get("Logo_client", "")).strip()
 if logo_url.startswith("http"):
     st.markdown(f"""
-    <div style="margin-top:12px;display:flex;align-items:center;gap:10px">
+    <div style="margin:8px 0 16px;display:flex;align-items:center;gap:10px">
         <img src="{logo_url}" style="height:28px;width:auto;object-fit:contain">
         <span style="font-size:0.78rem;color:#8d6e63">{obra_sel}</span>
     </div>
     """, unsafe_allow_html=True)
-st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown("<div style='margin-bottom:16px'></div>", unsafe_allow_html=True)
 
 # ==========================================
-# 8. FORMULARI — sense canvas aquí dins
+# 8. FORMULARIO
 # ==========================================
 with st.form("main_form", clear_on_submit=False):
-    st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<span class="label-bold">Mesures i Avanç</span>', unsafe_allow_html=True)
+
+    # Medidas — directamente sin panel encima del form
+    st.markdown('<span class="label-bold">Medidas y avance</span>', unsafe_allow_html=True)
 
     camps_actius = []
     for field in ["Camp1", "Camp2", "Camp3"]:
@@ -258,29 +294,41 @@ with st.form("main_form", clear_on_submit=False):
         if pd.notna(val) and str(val).strip():
             camps_actius.append(str(val))
 
-    valors = [0.0, 0.0, 0.0]
+    valors = [None, None, None]
     if camps_actius:
         m_cols = st.columns(len(camps_actius))
         for i, nom in enumerate(camps_actius):
             with m_cols[i]:
-                valors[i] = st.number_input(nom, min_value=0.0, step=0.5, format="%.1f")
+                # value=None → camp buit per defecte (sense 0)
+                valors[i] = st.number_input(
+                    nom,
+                    min_value=0.0,
+                    value=None,
+                    step=0.5,
+                    format="%.1f",
+                    placeholder="0"
+                )
 
-    v1, v2, v3 = valors
+    v1 = valors[0] or 0.0
+    v2 = valors[1] or 0.0
+    v3 = valors[2] or 0.0
+
+    st.markdown("<div style='margin-bottom:12px'></div>", unsafe_allow_html=True)
 
     comentaris = st.text_area(
-        "Notes de la jornada",
-        placeholder="Explica detalls rellevants...",
+        "Comentarios de la jornada",
+        placeholder="Describe detalles relevantes del trabajo...",
         height=90
     )
-    operari = st.text_input("Operari responsable", value="Luis")
-    st.markdown('</div>', unsafe_allow_html=True)
+    operari = st.text_input("Responsable en obra")
+
+    st.markdown("<div style='margin-top:8px'></div>", unsafe_allow_html=True)
 
     # Fotos
-    st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<span class="label-bold">Reportatge Fotogràfic</span>', unsafe_allow_html=True)
-    tab_cam, tab_gal = st.tabs(["📷 Càmera", "🖼 Galeria"])
+    st.markdown('<span class="label-bold">Reportaje fotográfico</span>', unsafe_allow_html=True)
+    tab_cam, tab_gal = st.tabs(["📷 Cámara", "🖼 Galería"])
     with tab_cam:
-        foto_cam = st.camera_input("Fer foto", label_visibility="collapsed")
+        foto_cam = st.camera_input("Hacer foto", label_visibility="collapsed")
     with tab_gal:
         fotos_extra = st.file_uploader(
             "Adjuntar fotos",
@@ -288,19 +336,18 @@ with st.form("main_form", clear_on_submit=False):
             type=["jpg", "jpeg", "png", "webp"],
             label_visibility="collapsed"
         )
-    st.markdown('</div>', unsafe_allow_html=True)
 
-    enviar = st.form_submit_button("▶  FINALITZAR I ENVIAR INFORME")
+    enviar = st.form_submit_button("▶  FINALIZAR Y ENVIAR INFORME")
 
 # ==========================================
-# 9. FIRMES — FORA del form (obligatori)
+# 9. FIRMAS — FUERA del form (obligatorio)
 # ==========================================
 st.markdown('<div class="panel">', unsafe_allow_html=True)
-st.markdown('<span class="label-bold">Signatures</span>', unsafe_allow_html=True)
+st.markdown('<span class="label-bold">Firmas</span>', unsafe_allow_html=True)
 col_f1, col_f2 = st.columns(2)
 
 with col_f1:
-    st.caption("Responsable d'obra")
+    st.caption("Responsable de obra")
     st.markdown('<div class="firma-box">', unsafe_allow_html=True)
     canvas_resp = st_canvas(
         fill_color="rgba(255,255,255,0)",
@@ -316,7 +363,7 @@ with col_f1:
     st.markdown('</div>', unsafe_allow_html=True)
 
 with col_f2:
-    st.caption("Client / Propietari")
+    st.caption("Cliente / Propietario")
     st.markdown('<div class="firma-box">', unsafe_allow_html=True)
     canvas_cli = st_canvas(
         fill_color="rgba(255,255,255,0)",
@@ -333,14 +380,14 @@ with col_f2:
 st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
-# 10. ENVIAMENT
+# 10. ENVÍO
 # ==========================================
 if enviar:
     if not operari.strip():
-        st.warning("Cal indicar l'operari responsable.")
+        st.warning("Indica el responsable en obra.")
         st.stop()
 
-    # Recollir fotos
+    # Recopilar fotos
     totes_fotos = []
     if foto_cam:
         n, b, m = sanitize_image("foto_obra", foto_cam.getvalue())
@@ -350,38 +397,38 @@ if enviar:
             n, b, m = sanitize_image(f.name.rsplit(".", 1)[0], f.getvalue())
             totes_fotos.append((n, b, m))
 
-    # Firmes
+    # Firmas
     firma_resp = canvas_to_bytes(canvas_resp)
     firma_cli  = canvas_to_bytes(canvas_cli)
     if firma_resp:
         totes_fotos.append(("firma_responsable.jpg", firma_resp, "image/jpeg"))
     if firma_cli:
-        totes_fotos.append(("firma_client.jpg", firma_cli, "image/jpeg"))
+        totes_fotos.append(("firma_cliente.jpg", firma_cli, "image/jpeg"))
 
-    with st.spinner("Enviant informe..."):
+    with st.spinner("Enviando informe..."):
         errors = []
 
-        # A. Guardar a Sheets
+        # A. Guardar en Sheets
         try:
             try:
                 df_seg = conn.read(worksheet="Seguiment", ttl=0).dropna(how="all")
             except Exception:
                 df_seg = pd.DataFrame(columns=[
-                    "Data","Hora","Equip","Projecte","Tipus",
-                    "Dada1","Dada2","Dada3","Comentaris","Operari","Fotos","Firmes"
+                    "Fecha","Hora","Equipo","Proyecto","Trabajo",
+                    "Dato1","Dato2","Dato3","Comentarios","Responsable","Fotos","Firmas"
                 ])
 
             nova = pd.DataFrame([{
-                "Data":       datetime.now().strftime("%d/%m/%Y"),
-                "Hora":       datetime.now().strftime("%H:%M"),
-                "Equip":      equip_actual,
-                "Projecte":   obra_sel,
-                "Tipus":      tipus_sel,
-                "Dada1":      v1, "Dada2": v2, "Dada3": v3,
-                "Comentaris": comentaris,
-                "Operari":    operari,
-                "Fotos":      len(totes_fotos),
-                "Firmes":     ("Resp" if firma_resp else "") + ("·Client" if firma_cli else "")
+                "Fecha":        datetime.now().strftime("%d/%m/%Y"),
+                "Hora":         datetime.now().strftime("%H:%M"),
+                "Equipo":       equip_actual,
+                "Proyecto":     obra_sel,
+                "Trabajo":      tipus_sel,
+                "Dato1":        v1, "Dato2": v2, "Dato3": v3,
+                "Comentarios":  comentaris,
+                "Responsable":  operari,
+                "Fotos":        len(totes_fotos),
+                "Firmas":       ("Resp" if firma_resp else "") + (" · Cliente" if firma_cli else "")
             }])
             conn.update(worksheet="Seguiment", data=pd.concat([df_seg, nova], ignore_index=True))
         except Exception as e:
@@ -395,52 +442,139 @@ if enviar:
 
             if destinataris:
                 msg = MIMEMultipart("mixed")
-                msg["Subject"] = f"[Seguiment] {obra_sel} · {tipus_sel} · {datetime.now().strftime('%d/%m/%Y')}"
-                msg["From"]    = f"Estellé Parquet <{smtp_cfg['user']}>"
+                # Asunto tal como lo quieres
+                msg["Subject"] = f"Seguimiento del proyecto {obra_sel} - Estellé parquet"
+                # From: nombre visible sin mostrar el email real
+                msg["From"]    = "Estellé Parquet · Seguimiento <noreply@estelleparquet.com>"
+                msg["Reply-To"] = smtp_cfg["user"]
                 msg["To"]      = ", ".join(destinataris)
 
-                files_m = "".join(
-                    f'<tr><td style="padding:8px 16px;border-bottom:1px solid #f0ebe8;color:#8d6e63;font-size:12px">{nom}</td>'
-                    f'<td style="padding:8px 16px;border-bottom:1px solid #f0ebe8;color:#2c2c2c;font-size:14px;font-weight:600;text-align:right">{[v1,v2,v3][i]}</td></tr>'
-                    for i, nom in enumerate(camps_actius)
-                )
-                logo_h  = f'<img src="{logo_url}" style="height:26px;margin-bottom:6px"><br>' if logo_url.startswith("http") else ""
-                obs_h   = f'<div style="background:#fdf8f5;border-left:3px solid #8d6e63;padding:10px 14px;border-radius:0 8px 8px 0;color:#4a4a4a;font-size:13px;line-height:1.6;margin:14px 0">{comentaris}</div>' if comentaris.strip() else ""
-                fotos_h = f'<p style="color:#8d6e63;font-size:12px">📎 {len(totes_fotos)} adjunt(s)</p>' if totes_fotos else ""
+                # Logo embebido en base64 (evita bloquejos de clients de correu)
+                logo_b64 = logo_a_base64(logo_url) if logo_url.startswith("http") else None
+                logo_html = f'<img src="{logo_b64}" style="height:40px;width:auto;object-fit:contain;margin-bottom:10px;display:block">' if logo_b64 else ""
 
-                html = f"""<!DOCTYPE html><html><body style="margin:0;padding:0;background:#fdfaf7;font-family:'Helvetica Neue',sans-serif">
-<table width="100%" cellpadding="0" cellspacing="0" style="padding:24px 0"><tr><td align="center">
-<table width="520" cellpadding="0" cellspacing="0" style="background:white;border:1px solid #e0d7d0;border-radius:14px;overflow:hidden">
-<tr><td style="background:#4e342e;padding:22px 20px">
-    {logo_h}
-    <table width="100%"><tr>
-        <td><div style="font-size:16px;font-weight:700;color:white">Informe de Seguiment</div>
-            <div style="font-size:11px;color:rgba(255,255,255,0.6);margin-top:2px">{obra_sel} · {tipus_sel}</div></td>
-        <td style="text-align:right"><div style="font-size:11px;color:rgba(255,255,255,0.6)">{datetime.now().strftime('%d/%m/%Y · %H:%M')}</div></td>
-    </tr></table>
-</td></tr>
-<tr><td><table width="100%">
-<tr>
-    <td width="50%" style="padding:14px 16px;border-right:1px solid #f0ebe8;border-bottom:1px solid #f0ebe8">
-        <div style="font-size:9px;color:#8d6e63;letter-spacing:2px;text-transform:uppercase;margin-bottom:4px">Equip</div>
-        <div style="font-size:14px;color:#2c2c2c;font-weight:600">{equip_actual}</div>
-    </td>
-    <td width="50%" style="padding:14px 16px;border-bottom:1px solid #f0ebe8">
-        <div style="font-size:9px;color:#8d6e63;letter-spacing:2px;text-transform:uppercase;margin-bottom:4px">Operari</div>
-        <div style="font-size:14px;color:#2c2c2c;font-weight:600">{operari}</div>
-    </td>
-</tr>
-{files_m}
-</table></td></tr>
-{'<tr><td style="padding:0 16px">' + obs_h + '</td></tr>' if obs_h else ''}
-{'<tr><td style="padding:8px 16px">' + fotos_h + '</td></tr>' if fotos_h else ''}
-<tr><td style="padding:14px 16px;border-top:1px solid #f0ebe8;text-align:center">
-    <div style="font-size:9px;color:#bcaaa4;letter-spacing:1px">ESTELLÉ PARQUET · SISTEMA DE SEGUIMENT AUTOMATITZAT</div>
-</td></tr>
-</table></td></tr></table></body></html>"""
+                # Línies de treballs — format compacte: "72 m² parquet"
+                treballs_html = ""
+                for i, nom in enumerate(camps_actius):
+                    val_fmt = fmt_valor([v1, v2, v3][i])
+                    treballs_html += f"""
+                    <tr>
+                        <td style="padding:6px 0;font-size:20px;font-weight:700;color:#787879;
+                                   font-family:Montserrat,sans-serif;white-space:nowrap">
+                            {val_fmt}
+                        </td>
+                        <td style="padding:6px 0 6px 10px;font-size:20px;color:#9c9c94;
+                                   font-family:Montserrat,sans-serif">
+                            {nom}
+                        </td>
+                    </tr>"""
+
+                obs_html = f"""
+                <tr><td colspan="2" style="padding-top:16px">
+                    <div style="color:#421cad;font-family:Montserrat,sans-serif;font-size:15px;font-weight:600;margin-bottom:4px">
+                        COMENTARIOS DE LA JORNADA:
+                    </div>
+                    <div style="color:#8c7bc6;font-family:Montserrat,sans-serif;font-size:15px;line-height:1.5">
+                        {comentaris}
+                    </div>
+                </td></tr>""" if comentaris.strip() else ""
+
+                firmes_info = []
+                if firma_resp: firmes_info.append("Firma responsable adjunta")
+                if firma_cli:  firmes_info.append("Firma cliente adjunta")
+                firmes_html = ""
+                if firmes_info:
+                    firmes_html = f"""
+                    <tr><td colspan="2" style="padding-top:12px;font-size:12px;color:#8d6e63;
+                                               font-family:Montserrat,sans-serif">
+                        📎 {" · ".join(firmes_info)}
+                    </td></tr>"""
+
+                html = f"""<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#fefdf1;font-family:Arial,sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#fefdf1;padding:20px 0">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0"
+       style="background:#fff9e5;border-radius:12px;overflow:hidden;max-width:600px">
+
+  <!-- Logo -->
+  <tr><td style="padding:30px 30px 10px;text-align:center">
+    {logo_html}
+  </td></tr>
+
+  <!-- Fecha -->
+  <tr><td style="padding:0 30px 10px;text-align:center">
+    <div style="color:#7747ff;font-family:Montserrat,sans-serif;font-size:18px">
+      {datetime.now().strftime("%d · %m · %Y")}
+    </div>
+  </td></tr>
+
+  <!-- Separador -->
+  <tr><td style="padding:0 30px">
+    <hr style="border:none;border-top:1px solid #ddd;margin:0">
+  </td></tr>
+
+  <!-- Proyecto -->
+  <tr><td style="padding:20px 30px 5px;text-align:center">
+    <div style="font-size:11px;color:#0b0b0b;font-family:Montserrat,sans-serif;
+                text-transform:uppercase;letter-spacing:1px">PROYECTO</div>
+    <h3 style="margin:6px 0 0;color:#0b0b0b;font-family:Montserrat,sans-serif;
+               font-size:18px">{obra_sel}</h3>
+    <em style="color:#0b0b0b;font-family:Montserrat,sans-serif;font-size:13px">
+      By ESTELLÉ parquet
+    </em>
+  </td></tr>
+
+  <!-- Separador -->
+  <tr><td style="padding:15px 30px 0">
+    <hr style="border:none;border-top:1px solid #ddd;margin:0">
+  </td></tr>
+
+  <!-- TRABAJOS -->
+  <tr><td style="padding:20px 30px 0;text-align:center">
+    <h2 style="margin:0;color:#7747ff;font-family:Montserrat,sans-serif;
+               font-size:18px;font-weight:700;letter-spacing:2px">TRABAJOS</h2>
+  </td></tr>
+
+  <tr><td style="padding:12px 30px 20px">
+    <table cellpadding="0" cellspacing="0" align="center">
+      {treballs_html}
+      {obs_html}
+      {firmes_html}
+    </table>
+  </td></tr>
+
+  <!-- Separador -->
+  <tr><td style="padding:0 30px">
+    <hr style="border:none;border-top:1px solid #ddd;margin:0">
+  </td></tr>
+
+  <!-- Equipo y responsable -->
+  <tr><td style="padding:20px 30px;text-align:center">
+    <div style="color:#9c9c94;font-family:Montserrat,sans-serif;font-size:16px">Responsable en obra</div>
+    <div style="color:#8125bb;font-family:Montserrat,sans-serif;font-size:20px;font-weight:600;margin:4px 0 14px">{operari}</div>
+    <div style="color:#9c9c94;font-family:Montserrat,sans-serif;font-size:16px">Equipo</div>
+    <div style="color:#8125bb;font-family:Montserrat,sans-serif;font-size:20px;font-weight:600;margin:4px 0">{equip_actual}</div>
+  </td></tr>
+
+  <!-- Footer -->
+  <tr><td style="padding:20px 30px;text-align:center">
+    <a href="http://www.estelleparquet.com"
+       style="color:#4e342e;font-size:13px;font-family:Montserrat,sans-serif">
+      www.estelleparquet.com
+    </a>
+    <p style="margin:12px 0 0;font-size:12px;color:#888;font-family:Montserrat,sans-serif;line-height:1.6">
+      Realizamos el seguimiento diario para una óptima comunicación y mejora de nuestros servicios.
+    </p>
+  </td></tr>
+
+</table>
+</td></tr></table>
+</body></html>"""
 
                 msg.attach(MIMEText(html, "html"))
 
+                # Adjuntos (fotos + firmas)
                 for nom_f, contingut, mime_t in totes_fotos:
                     p1, p2 = (mime_t.split("/") + ["octet-stream"])[:2]
                     adj = MIMEBase(p1, p2)
@@ -452,24 +586,27 @@ if enviar:
                 with smtplib.SMTP(smtp_cfg["server"], smtp_cfg["port"]) as s:
                     s.starttls()
                     s.login(smtp_cfg["user"], smtp_cfg["password"])
+                    # sendmail necessita l'email real per enviar, però el From del header és el visible
                     s.sendmail(smtp_cfg["user"], destinataris, msg.as_string())
 
         except Exception as e:
             errors.append(f"Email: {e}")
 
+    # Resultat
     if not errors:
-        fotos_txt = f"{len(totes_fotos)} adjunt(s)" if totes_fotos else "Sense adjunts"
-        firmes_txt = []
-        if firma_resp: firmes_txt.append("firma responsable")
-        if firma_cli:  firmes_txt.append("firma client")
-        f_txt = " · ".join(firmes_txt) if firmes_txt else "sense firmes"
+        fotos_txt   = f"{len(totes_fotos)} adjunto(s)" if totes_fotos else "Sin adjuntos"
+        firmes_list = []
+        if firma_resp: firmes_list.append("firma responsable")
+        if firma_cli:  firmes_list.append("firma cliente")
+        f_txt = " · ".join(firmes_list) if firmes_list else "sin firmas"
 
         st.markdown(f"""
         <div class="success-box">
             <div style="font-size:1.3rem">✔</div>
             <div>
-                <h4>Informe registrat correctament</h4>
-                <p>{obra_sel} · {tipus_sel} · {datetime.now().strftime('%d/%m/%Y %H:%M')}<br>{fotos_txt} · {f_txt}</p>
+                <h4>Informe registrado correctamente</h4>
+                <p>{obra_sel} · {tipus_sel} · {datetime.now().strftime('%d/%m/%Y %H:%M')}<br>
+                   {fotos_txt} · {f_txt}</p>
             </div>
         </div>
         """, unsafe_allow_html=True)

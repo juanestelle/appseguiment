@@ -2,6 +2,7 @@ import smtplib
 import urllib.request
 import ssl
 import base64
+import re
 from datetime import datetime
 from io import BytesIO
 from typing import Tuple, Optional
@@ -169,35 +170,70 @@ def sanitize_image(name: str, content: bytes) -> Tuple[str, bytes, str]:
     return f"{name}.jpg", out.getvalue(), "image/jpeg"
 
 def canvas_to_bytes(canvas_result) -> Optional[bytes]:
+    """Converteix el canvas a bytes JPEG. Retorna None si està en blanc."""
     if canvas_result is None or canvas_result.image_data is None:
         return None
+    
     arr = canvas_result.image_data.astype("uint8")
-    # Si el canvas és tot blanc/transparent, no comptem com a firma
-    if arr[:, :, 3].max() < 10:
+    
+    # Comprovació millorada per detectar si està en blanc:
+    # Com que el fons és #fafafa (opac), no podem mirar només l'alfa.
+    # Verifiquem si tota la imatge és uniforme (color de fons).
+    # RGBA té 4 canals. Mirem si els píxels són tots iguals.
+    # Per simplificar i ser ràpids: si la desviació estàndar és 0, és buida.
+    # O millor: comparem amb el color del fons.
+    
+    # Color de fons del canvas: #fafafa -> RGB(250, 250, 250)
+    # Si la imatge és tot 250,250,250..., no hi ha firma.
+    if arr.std() < 1.0: # Si gairebé no hi ha variació (imatge plana)
         return None
+
     img = Image.fromarray(arr, "RGBA").convert("RGB")
     out = BytesIO()
     img.save(out, format="JPEG", quality=90)
     return out.getvalue()
 
+def convert_gdrive_url(url: str) -> str:
+    """Converteix URL de Google Drive a URL de descàrrega directa."""
+    if "drive.google.com" in url:
+        # Patró típic: /d/ID/...
+        match = re.search(r'/d/([a-zA-Z0-9_-]+)', url)
+        if match:
+            file_id = match.group(1)
+            return f"https://drive.google.com/uc?export=download&id={file_id}"
+        # Patró alternatiu: id=ID
+        match = re.search(r'id=([a-zA-Z0-9_-]+)', url)
+        if match:
+            file_id = match.group(1)
+            return f"https://drive.google.com/uc?export=download&id={file_id}"
+    return url
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def logo_a_base64(url: str) -> Optional[str]:
-    """Descarrega el logo del CLIENT (per projecte) i el converteix a base64.
-    El resultat es cacheja 1 hora per no repetir la descàrrega a cada rerun."""
+    """Descarrega el logo, converteix a base64 i cacheja."""
     if not url or not url.startswith("http"):
         return None
+    
+    # Convertim URL si és de Google Drive
+    url_dl = convert_gdrive_url(url)
+    
     try:
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
-        req = urllib.request.Request(url, headers={
+        req = urllib.request.Request(url_dl, headers={
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
             "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
         })
-        with urllib.request.urlopen(req, timeout=8, context=ctx) as r:
+        with urllib.request.urlopen(req, timeout=10, context=ctx) as r:
             data = r.read()
-            content_type = r.headers.get("Content-Type", "image/png").split(";")[0].strip()
-        return f"data:{content_type};base64,{base64.b64encode(data).decode()}"
+            # Si Google retorna una pàgina HTML (per permisos), no serà una imatge vàlida
+            content_type = r.headers.get("Content-Type", "")
+            if "image" not in content_type:
+                return None
+                
+            ct = content_type.split(";")[0].strip()
+        return f"data:{ct};base64,{base64.b64encode(data).decode()}"
     except Exception:
         return None
 
@@ -302,7 +338,7 @@ dades_t = df_templates[df_templates["Tipus"] == tipus_sel].iloc[0]
 
 logo_url = str(dades_p.get("Logo_client", "")).strip()
 
-# Logo del CLIENT (diferent per cada projecte, descarregat i cachejat)
+# Logo del CLIENT
 logo_b64_client = logo_a_base64(logo_url) if logo_url else None
 if logo_b64_client:
     st.markdown(f"""
@@ -358,7 +394,6 @@ st.markdown('<span class="label-up">Reportaje fotográfico</span>', unsafe_allow
 tab_cam, tab_gal = st.tabs(["📷  Cámara", "🖼  Galería"])
 
 with tab_cam:
-    # La càmera s'activa només quan es prem el botó — estalvia bateria i recursos
     if "camara_activa" not in st.session_state:
         st.session_state.camara_activa = False
 
@@ -374,7 +409,7 @@ with tab_cam:
                 if foto_cam is not None:
                     n, b, m = sanitize_image(f"foto_{len(st.session_state.fotos_acumulades)+1:02d}", foto_cam.getvalue())
                     st.session_state.fotos_acumulades.append((n, b, m))
-                    st.session_state.camara_activa = False  # apaguem càmera un cop afegida
+                    st.session_state.camara_activa = False
                     st.rerun()
         with col_clr:
             if st.button("✕ Cerrar cámara"):
@@ -391,7 +426,7 @@ with tab_gal:
                 st.session_state.fotos_acumulades.append((n, b, m))
             st.rerun()
 
-# Miniatures de les fotos acumulades
+# Miniatures
 if st.session_state.fotos_acumulades:
     thumbs_html = '<div class="foto-thumb-row">'
     for nom_f, cont_f, _ in st.session_state.fotos_acumulades:
@@ -438,8 +473,11 @@ st.markdown('</div>', unsafe_allow_html=True)
 if enviar:
     totes_fotos = list(st.session_state.fotos_acumulades)  # còpia
 
+    # Obtenim les firmes (retornen None si estan en blanc)
     firma_resp = canvas_to_bytes(canvas_resp)
     firma_cli  = canvas_to_bytes(canvas_cli)
+    
+    # Afegim firmes NOMÉS si existeixen (no són None)
     if firma_resp: totes_fotos.append(("firma_responsable.jpg", firma_resp, "image/jpeg"))
     if firma_cli:  totes_fotos.append(("firma_cliente.jpg",     firma_cli,  "image/jpeg"))
 
@@ -484,13 +522,13 @@ if enviar:
                 msg["Reply-To"] = smtp_cfg["user"]
                 msg["To"]       = ", ".join(destinataris)
 
-                # Logo del CLIENT embegut en base64 — ja descarregat i cachejat
+                # Logo: prioritat base64, sino URL original
                 logo_src_email = logo_b64_client if logo_b64_client else logo_url
                 logo_html = (f'<img src="{logo_src_email}" width="180" style="display:block;'
                              f'margin:0 auto 8px;max-height:70px;object-fit:contain">'
                              if logo_src_email else "")
 
-                # Treballs
+                # Taula de treballs
                 treballs_html = ""
                 for i, nom in enumerate(camps_actius):
                     vf = fmt_valor([v1, v2, v3][i])
@@ -517,6 +555,7 @@ if enviar:
                     adjunts_info.append(f"{len(st.session_state.fotos_acumulades)} foto(s)")
                 if firma_resp: adjunts_info.append("firma responsable")
                 if firma_cli:  adjunts_info.append("firma cliente")
+                
                 adjunts_html = ""
                 if adjunts_info:
                     adjunts_html = f"""
@@ -612,6 +651,7 @@ if enviar:
 
                 msg.attach(MIMEText(html, "html"))
 
+                # Annexem arxius (incloent firmes només si no són None)
                 for nom_f, contingut, mime_t in totes_fotos:
                     p1, p2 = (mime_t.split("/") + ["octet-stream"])[:2]
                     adj = MIMEBase(p1, p2)

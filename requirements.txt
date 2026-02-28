@@ -1,9 +1,8 @@
 st-gsheets-connection
-jinja2
 streamlit
 pandas
 plotly
 gspread
 oauth2client
-streamlit-gsheets
 Pillow
+jinja2

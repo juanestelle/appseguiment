@@ -41,6 +41,8 @@ st.markdown("""
 .foto-thumb-row img { height:64px; width:64px; object-fit:cover; border-radius:8px; border:1px solid var(--border); }
 .foto-count { font-size:0.75rem; color:var(--accent); margin-top:6px; font-weight:500; }
 .firma-box { border:1.5px dashed #d7ccc8; border-radius:12px; overflow:hidden; background:#fafafa; }
+.firma-ok { background:#e8f5e9; border:1px solid #a5d6a7; border-radius:8px;
+    padding:6px 12px; font-size:0.78rem; color:#2e7d32; margin-top:6px; text-align:center; }
 .stFormSubmitButton > button { background:var(--wood) !important; color:white !important;
     border-radius:12px !important; padding:0.85rem !important; font-weight:600 !important;
     border:none !important; width:100% !important; font-size:0.9rem !important; }
@@ -51,8 +53,6 @@ st.markdown("""
     display:flex; gap:12px; align-items:flex-start; margin-top:14px; }
 .success-box h4 { margin:0 0 3px; color:#2e7d32; font-size:0.9rem; }
 .success-box p  { margin:0; color:#666; font-size:0.76rem; line-height:1.5; }
-.logo-warning { background:#fff8e1; border:1px solid #ffe082; border-radius:8px;
-    padding:8px 12px; font-size:0.72rem; color:#795548; margin-bottom:10px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -73,9 +73,11 @@ def sanitize_image(name: str, content: bytes) -> Tuple[str, bytes, str]:
     return f"{name}.jpg", out.getvalue(), "image/jpeg"
 
 def canvas_to_bytes(canvas_result) -> Optional[bytes]:
+    """Retorna bytes JPEG si s'ha dibuixat algo, None si el canvas és en blanc."""
     if canvas_result is None or canvas_result.image_data is None:
         return None
     arr = canvas_result.image_data.astype("uint8")
+    # El canal alpha = 0 vol dir transparent (no dibuixat)
     if arr[:, :, 3].max() < 10:
         return None
     img = Image.fromarray(arr, "RGBA").convert("RGB")
@@ -83,53 +85,26 @@ def canvas_to_bytes(canvas_result) -> Optional[bytes]:
     img.save(out, format="JPEG", quality=90)
     return out.getvalue()
 
-def gdrive_to_direct(url: str) -> str:
-    """Converteix URL de Google Drive a descàrrega directa."""
-    if "drive.google.com" in url:
-        m = re.search(r'/d/([a-zA-Z0-9_-]+)', url) or re.search(r'id=([a-zA-Z0-9_-]+)', url)
-        if m:
-            return f"https://lh3.googleusercontent.com/d/{m.group(1)}"
-    return url
-
-@st.cache_data(ttl=0, show_spinner=False)
-def logo_a_base64(url: str) -> Tuple[Optional[str], str]:
-    """
-    Intenta descarregar el logo i retorna (base64_o_None, missatge_diagnosi).
-    Suporta: Google Drive, URLs directes, Imgur, etc.
-    NO suporta URLs que requereixin autenticació (ex: api.moreapp.com).
-    """
+def logo_to_b64_email(url: str) -> Optional[str]:
+    """Descarrega el logo per embeure'l a l'email. Retorna base64 o None."""
     if not url or not url.startswith("http"):
-        return None, "sense URL"
-
-    # Convertim Google Drive si escau
-    url_real = gdrive_to_direct(url)
-
+        return None
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
-
-    for attempt_url in [url_real, url]:  # prova URL convertida i original
-        try:
-            req = urllib.request.Request(attempt_url, headers={
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-                "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
-                "Referer": "https://www.google.com/",
-            })
-            with urllib.request.urlopen(req, timeout=10, context=ctx) as r:
-                data = r.read()
-                ct = r.headers.get("Content-Type", "")
-                if "image" not in ct and "octet-stream" not in ct:
-                    return None, f"URL retorna {ct[:40]} (no és una imatge). Usa Drive públic o Imgur."
-                mime = ct.split(";")[0].strip() or "image/png"
-            return f"data:{mime};base64,{base64.b64encode(data).decode()}", "ok"
-        except urllib.error.HTTPError as e:
-            msg = f"HTTP {e.code}"
-            if e.code == 403:
-                msg = "403 Accés denegat — la URL requereix autenticació. Veure nota ⬇"
-        except Exception as ex:
-            msg = str(ex)[:80]
-
-    return None, msg
+    try:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "image/*,*/*;q=0.8",
+        })
+        with urllib.request.urlopen(req, timeout=10, context=ctx) as r:
+            data = r.read()
+            ct = r.headers.get("Content-Type", "image/png").split(";")[0].strip()
+            if "image" not in ct:
+                return None
+        return f"data:{ct};base64,{base64.b64encode(data).decode()}"
+    except Exception:
+        return None
 
 def fmt_valor(v) -> str:
     if v is None: return "0"
@@ -169,9 +144,11 @@ if "auth_user" not in st.session_state:
         if st.form_submit_button("ENTRAR"):
             match = df_equips[df_equips["PIN"].apply(norm_pin) == norm_pin(pin_in)]
             if not match.empty:
-                st.session_state.auth_user = match.iloc[0]["Equip"]
+                st.session_state.auth_user       = match.iloc[0]["Equip"]
                 st.session_state.fotos_acumulades = []
-                st.session_state.camara_activa = False
+                st.session_state.camara_activa    = False
+                st.session_state.firma_resp_bytes = None
+                st.session_state.firma_cli_bytes  = None
                 st.rerun()
             else:
                 st.error("PIN incorrecto. Consulta a tu responsable.")
@@ -180,7 +157,13 @@ if "auth_user" not in st.session_state:
 equip_actual = st.session_state.auth_user
 
 # Init session state
-for k, v in [("fotos_acumulades", []), ("camara_activa", False)]:
+defaults = {
+    "fotos_acumulades": [],
+    "camara_activa": False,
+    "firma_resp_bytes": None,   # ← firmes guardades explícitament
+    "firma_cli_bytes": None,
+}
+for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
@@ -213,8 +196,8 @@ with col_hd:
 with col_out:
     st.markdown("<div style='margin-top:22px'>", unsafe_allow_html=True)
     if st.button("Salir"):
-        del st.session_state["auth_user"]
-        st.session_state.fotos_acumulades = []
+        for k in ["auth_user","fotos_acumulades","camara_activa","firma_resp_bytes","firma_cli_bytes"]:
+            st.session_state.pop(k, None)
         st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -229,35 +212,22 @@ tipus_sel = col_b.selectbox("Trabajo realizado", df_templates["Tipus"].unique())
 dades_p = df_proj[df_proj["Nom"] == obra_sel].iloc[0]
 dades_t = df_templates[df_templates["Tipus"] == tipus_sel].iloc[0]
 
-# Logo del CLIENT — descarregar i mostrar diagnosi si falla
+# Logo del CLIENT — st.image() el carrega directament des de la URL (cap codi extra)
 logo_url = str(dades_p.get("Logo_client", "")).strip()
-logo_b64, logo_status = logo_a_base64(logo_url) if logo_url else (None, "sense URL")
-
-if logo_b64:
-    st.markdown(f"""
-    <div style="margin:8px 0 14px;display:flex;align-items:center;gap:12px">
-        <img src="{logo_b64}" style="height:36px;width:auto;max-width:160px;object-fit:contain">
-        <span style="font-size:0.85rem;font-weight:500;color:#4e342e">{obra_sel}</span>
-    </div>""", unsafe_allow_html=True)
-elif logo_url:
-    # Mostra el problema concret per poder-lo corregir
-    nota_gdrive = ""
-    if "drive.google.com" in logo_url:
-        nota_gdrive = " Per a Drive: fes el fitxer <b>públic</b> (Compartir → Qualsevol amb l'enllaç) i usa l'URL de visualització."
-    moreapp_nota = ""
-    if "moreapp.com" in logo_url:
-        moreapp_nota = " Les URLs de MoreApp requereixen credencials — puja el logo a Google Drive o Imgur."
-    st.markdown(f"""<div class="logo-warning">⚠ Logo no disponible ({logo_status}).{nota_gdrive}{moreapp_nota}
-    <br>Afegeix una URL pública al camp <b>Logo_client</b> del Sheets.</div>""", unsafe_allow_html=True)
-    st.markdown(f"""<div style="margin:0 0 14px">
-        <span style="font-size:0.9rem;font-weight:600;color:#4e342e">{obra_sel}</span></div>""",
-        unsafe_allow_html=True)
+if logo_url.startswith("http"):
+    try:
+        col_logo, col_nom = st.columns([1, 4])
+        with col_logo:
+            st.image(logo_url, width=120)
+        with col_nom:
+            st.markdown(f"<div style='padding-top:12px;font-size:0.9rem;font-weight:600;"
+                        f"color:#4e342e'>{obra_sel}</div>", unsafe_allow_html=True)
+    except Exception:
+        st.markdown(f"<div style='margin:8px 0 14px;font-size:0.9rem;font-weight:600;"
+                    f"color:#4e342e'>{obra_sel}</div>", unsafe_allow_html=True)
 else:
-    st.markdown(f"""<div style="margin:8px 0 14px">
-        <span style="font-size:0.9rem;font-weight:600;color:#4e342e">{obra_sel}</span></div>""",
-        unsafe_allow_html=True)
-
-st.markdown("<div style='margin-bottom:14px'></div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='margin:8px 0 14px;font-size:0.9rem;font-weight:600;"
+                f"color:#4e342e'>{obra_sel}</div>", unsafe_allow_html=True)
 
 
 # ==========================================
@@ -317,7 +287,7 @@ with tab_cam:
                     st.session_state.camara_activa = False
                     st.rerun()
         with col_clr:
-            if st.button("✕ Cerrar cámara"):
+            if st.button("✕ Cerrar"):
                 st.session_state.camara_activa = False
                 st.rerun()
 
@@ -345,7 +315,8 @@ st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ==========================================
-# FIRMES
+# FIRMES — guardades en session_state amb botó explícit
+# El canvas es reseteja en cada rerun, per això cal guardar-la manualment
 # ==========================================
 st.markdown('<div class="panel">', unsafe_allow_html=True)
 st.markdown('<span class="label-up">Firmas</span>', unsafe_allow_html=True)
@@ -354,20 +325,43 @@ col_f1, col_f2 = st.columns(2)
 with col_f1:
     st.caption("Responsable de obra")
     st.markdown('<div class="firma-box">', unsafe_allow_html=True)
-    canvas_resp = st_canvas(fill_color="rgba(255,255,255,0)", stroke_width=2,
-                             stroke_color="#1a1a1a", background_color="#fafafa",
-                             height=140, key="canvas_resp", update_streamlit=False,
-                             drawing_mode="freedraw", display_toolbar=False)
+    canvas_resp = st_canvas(
+        fill_color="rgba(255,255,255,0)", stroke_width=2,
+        stroke_color="#1a1a1a", background_color="#fafafa",
+        height=140, key="canvas_resp", update_streamlit=True,
+        drawing_mode="freedraw", display_toolbar=False
+    )
     st.markdown('</div>', unsafe_allow_html=True)
+    if st.button("💾 Guardar firma responsable"):
+        b = canvas_to_bytes(canvas_resp)
+        if b:
+            st.session_state.firma_resp_bytes = b
+            st.success("✔ Firma guardada")
+        else:
+            st.warning("El canvas está en blanco")
+    if st.session_state.firma_resp_bytes:
+        st.markdown('<div class="firma-ok">✔ Firma responsable lista</div>', unsafe_allow_html=True)
 
 with col_f2:
     st.caption("Cliente / Propietario")
     st.markdown('<div class="firma-box">', unsafe_allow_html=True)
-    canvas_cli = st_canvas(fill_color="rgba(255,255,255,0)", stroke_width=2,
-                            stroke_color="#1a1a1a", background_color="#fafafa",
-                            height=140, key="canvas_cli", update_streamlit=False,
-                            drawing_mode="freedraw", display_toolbar=False)
+    canvas_cli = st_canvas(
+        fill_color="rgba(255,255,255,0)", stroke_width=2,
+        stroke_color="#1a1a1a", background_color="#fafafa",
+        height=140, key="canvas_cli", update_streamlit=True,
+        drawing_mode="freedraw", display_toolbar=False
+    )
     st.markdown('</div>', unsafe_allow_html=True)
+    if st.button("💾 Guardar firma cliente"):
+        b = canvas_to_bytes(canvas_cli)
+        if b:
+            st.session_state.firma_cli_bytes = b
+            st.success("✔ Firma guardada")
+        else:
+            st.warning("El canvas está en blanco")
+    if st.session_state.firma_cli_bytes:
+        st.markdown('<div class="firma-ok">✔ Firma cliente lista</div>', unsafe_allow_html=True)
+
 st.markdown('</div>', unsafe_allow_html=True)
 
 
@@ -375,11 +369,10 @@ st.markdown('</div>', unsafe_allow_html=True)
 # ENVIAMENT
 # ==========================================
 if enviar:
-    # Firmes — canvas_to_bytes retorna None si està en blanc → NO s'adjunten
-    firma_resp = canvas_to_bytes(canvas_resp)
-    firma_cli  = canvas_to_bytes(canvas_cli)
+    # Usem les firmes guardades en session_state (no del canvas directament)
+    firma_resp = st.session_state.firma_resp_bytes
+    firma_cli  = st.session_state.firma_cli_bytes
 
-    # Llista final d'adjunts: fotos + firmes (solo si no son None)
     totes_fotos = list(st.session_state.fotos_acumulades)
     if firma_resp:
         totes_fotos.append(("firma_responsable.jpg", firma_resp, "image/jpeg"))
@@ -426,11 +419,12 @@ if enviar:
                 msg["Reply-To"] = smtp_cfg["user"]
                 msg["To"]       = ", ".join(destinataris)
 
-                # Logo: base64 si s'ha pogut descarregar, sinó URL directa (alguns clients la carreguen)
-                logo_src_email = logo_b64 if logo_b64 else (logo_url if logo_url else None)
-                logo_html = (f'<img src="{logo_src_email}" width="180" style="display:block;'
+                # Logo per l'email: intenta base64, fallback a URL directa
+                logo_b64_email = logo_to_b64_email(logo_url) if logo_url else None
+                logo_src = logo_b64_email or logo_url
+                logo_html = (f'<img src="{logo_src}" width="180" style="display:block;'
                              f'margin:0 auto 8px;max-height:70px;object-fit:contain">'
-                             if logo_src_email else "")
+                             if logo_src else "")
 
                 treballs_html = ""
                 for i, nom in enumerate(camps_actius):
@@ -452,11 +446,11 @@ if enviar:
                      font-family:Montserrat,'Trebuchet MS',sans-serif">{comentaris}</p>
                 </td></tr>""" if comentaris.strip() else ""
 
-                n_fotos_txt = len(st.session_state.fotos_acumulades)
                 adjunts_parts = []
-                if n_fotos_txt: adjunts_parts.append(f"{n_fotos_txt} foto(s)")
-                if firma_resp:  adjunts_parts.append("firma responsable")
-                if firma_cli:   adjunts_parts.append("firma cliente")
+                if st.session_state.fotos_acumulades:
+                    adjunts_parts.append(f"{len(st.session_state.fotos_acumulades)} foto(s)")
+                if firma_resp: adjunts_parts.append("firma responsable")
+                if firma_cli:  adjunts_parts.append("firma cliente")
                 adjunts_html = (f"""<tr><td colspan="2" style="padding-top:14px;font-size:12px;
                     color:#aaa;font-family:Montserrat,'Trebuchet MS',sans-serif">
                     📎 Adjuntos: {", ".join(adjunts_parts)}</td></tr>"""
@@ -507,7 +501,6 @@ if enviar:
 
                 msg.attach(MIMEText(html, "html"))
 
-                # Adjunts — NOMÉS els que existeixen
                 for nom_f, contingut, mime_t in totes_fotos:
                     p1, p2 = (mime_t.split("/") + ["octet-stream"])[:2]
                     adj = MIMEBase(p1, p2)
@@ -536,7 +529,10 @@ if enviar:
             <p>{obra_sel} · {tipus_sel}<br>
                {datetime.now().strftime('%d/%m/%Y · %H:%M')} · {n_f} foto(s) · {f_txt}</p>
             </div></div>""", unsafe_allow_html=True)
+        # Netejar estat
         st.session_state.fotos_acumulades = []
+        st.session_state.firma_resp_bytes = None
+        st.session_state.firma_cli_bytes  = None
     else:
         for err in errors:
             st.error(err)

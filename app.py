@@ -180,24 +180,24 @@ def canvas_to_bytes(canvas_result) -> Optional[bytes]:
     img.save(out, format="JPEG", quality=90)
     return out.getvalue()
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def logo_a_base64(url: str) -> Optional[str]:
-    """Descarrega el logo amb SSL permissiu i el converteix a base64."""
+    """Descarrega el logo del CLIENT (per projecte) i el converteix a base64.
+    El resultat es cacheja 1 hora per no repetir la descàrrega a cada rerun."""
+    if not url or not url.startswith("http"):
+        return None
     try:
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-                "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
-            }
-        )
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
+        })
         with urllib.request.urlopen(req, timeout=8, context=ctx) as r:
             data = r.read()
             content_type = r.headers.get("Content-Type", "image/png").split(";")[0].strip()
-        b64 = base64.b64encode(data).decode()
-        return f"data:{content_type};base64,{b64}"
+        return f"data:{content_type};base64,{base64.b64encode(data).decode()}"
     except Exception:
         return None
 
@@ -301,11 +301,19 @@ dades_p = df_proj[df_proj["Nom"] == obra_sel].iloc[0]
 dades_t = df_templates[df_templates["Tipus"] == tipus_sel].iloc[0]
 
 logo_url = str(dades_p.get("Logo_client", "")).strip()
-if logo_url.startswith("http"):
+
+# Logo del CLIENT (diferent per cada projecte, descarregat i cachejat)
+logo_b64_client = logo_a_base64(logo_url) if logo_url else None
+if logo_b64_client:
     st.markdown(f"""
-    <div style="margin:8px 0 14px;display:flex;align-items:center;gap:10px">
-        <img src="{logo_url}" style="height:28px;width:auto;object-fit:contain">
-        <span style="font-size:0.78rem;color:#8d6e63">{obra_sel}</span>
+    <div style="margin:8px 0 14px;display:flex;align-items:center;gap:12px">
+        <img src="{logo_b64_client}" style="height:36px;width:auto;max-width:160px;object-fit:contain">
+        <span style="font-size:0.85rem;font-weight:500;color:#4e342e">{obra_sel}</span>
+    </div>""", unsafe_allow_html=True)
+else:
+    st.markdown(f"""
+    <div style="margin:8px 0 14px">
+        <span style="font-size:0.9rem;font-weight:600;color:#4e342e">{obra_sel}</span>
     </div>""", unsafe_allow_html=True)
 
 st.markdown("<div style='margin-bottom:14px'></div>", unsafe_allow_html=True)
@@ -350,18 +358,28 @@ st.markdown('<span class="label-up">Reportaje fotográfico</span>', unsafe_allow
 tab_cam, tab_gal = st.tabs(["📷  Cámara", "🖼  Galería"])
 
 with tab_cam:
-    foto_cam = st.camera_input("Capturar foto", label_visibility="collapsed")
-    col_add, col_clr = st.columns([2, 1])
-    with col_add:
-        if st.button("＋ Añadir esta foto", disabled=(foto_cam is None)):
-            if foto_cam is not None:
-                n, b, m = sanitize_image(f"foto_{len(st.session_state.fotos_acumulades)+1:02d}", foto_cam.getvalue())
-                st.session_state.fotos_acumulades.append((n, b, m))
-                st.rerun()
-    with col_clr:
-        if st.button("🗑 Borrar todas") and st.session_state.fotos_acumulades:
-            st.session_state.fotos_acumulades = []
+    # La càmera s'activa només quan es prem el botó — estalvia bateria i recursos
+    if "camara_activa" not in st.session_state:
+        st.session_state.camara_activa = False
+
+    if not st.session_state.camara_activa:
+        if st.button("📷  Activar cámara"):
+            st.session_state.camara_activa = True
             st.rerun()
+    else:
+        foto_cam = st.camera_input("Capturar foto", label_visibility="collapsed")
+        col_add, col_clr = st.columns([2, 1])
+        with col_add:
+            if st.button("＋ Añadir esta foto", disabled=(foto_cam is None)):
+                if foto_cam is not None:
+                    n, b, m = sanitize_image(f"foto_{len(st.session_state.fotos_acumulades)+1:02d}", foto_cam.getvalue())
+                    st.session_state.fotos_acumulades.append((n, b, m))
+                    st.session_state.camara_activa = False  # apaguem càmera un cop afegida
+                    st.rerun()
+        with col_clr:
+            if st.button("✕ Cerrar cámara"):
+                st.session_state.camara_activa = False
+                st.rerun()
 
 with tab_gal:
     fotos_gal = st.file_uploader("Seleccionar imágenes", type=["jpg","jpeg","png","webp"],
@@ -382,6 +400,9 @@ if st.session_state.fotos_acumulades:
     thumbs_html += '</div>'
     thumbs_html += f'<div class="foto-count">✔ {len(st.session_state.fotos_acumulades)} foto(s) listas para enviar</div>'
     st.markdown(thumbs_html, unsafe_allow_html=True)
+    if st.button("🗑 Borrar todas las fotos"):
+        st.session_state.fotos_acumulades = []
+        st.rerun()
 
 st.markdown('</div>', unsafe_allow_html=True)
 
@@ -463,12 +484,11 @@ if enviar:
                 msg["Reply-To"] = smtp_cfg["user"]
                 msg["To"]       = ", ".join(destinataris)
 
-                # Logo embegut (base64) — intenta descàrrega, fallback a URL directa
-                logo_b64 = logo_a_base64(logo_url) if logo_url.startswith("http") else None
-                logo_src  = logo_b64 if logo_b64 else logo_url
-                logo_html = (f'<img src="{logo_src}" width="180" style="display:block;'
-                             f'margin:0 auto 16px;max-height:60px;object-fit:contain">'
-                             if logo_src else "")
+                # Logo del CLIENT embegut en base64 — ja descarregat i cachejat
+                logo_src_email = logo_b64_client if logo_b64_client else logo_url
+                logo_html = (f'<img src="{logo_src_email}" width="180" style="display:block;'
+                             f'margin:0 auto 8px;max-height:70px;object-fit:contain">'
+                             if logo_src_email else "")
 
                 # Treballs
                 treballs_html = ""

@@ -1,285 +1,488 @@
-import base64
-import smtplib
-from datetime import datetime
-from io import BytesIO
-from typing import List, Tuple
-
-import pandas as pd
 import streamlit as st
-from PIL import Image, ImageOps
-from email import encoders
-from email.mime.base import MIMEBase
+from streamlit_gsheets import GSheetsConnection
+import pandas as pd
+import smtplib
+import base64
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from streamlit_gsheets import GSheetsConnection
-
-# Firma opcional: si no está instalada, no rompe la app
-try:
-    from streamlit_signature_pad import st_signature_pad
-except Exception:
-    st_signature_pad = None
-
+from email.mime.base import MIMEBase
+from email import encoders
+from datetime import datetime
 
 # ==========================================
-# 1. CONFIGURACIÓN Y ESTILO "WARM"
+# 1. CONFIGURACIÓ
 # ==========================================
 st.set_page_config(
-    page_title="Estellé Parquet · Seguimiento",
-    page_icon="🪵",
-    layout="centered"
+    page_title="Estellé Parquet · Seguiment",
+    page_icon="📋",
+    layout="centered",
+    initial_sidebar_state="collapsed"
 )
 
+# ==========================================
+# 2. ESTILS — Disseny Tècnic Professional
+# ==========================================
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Inter:wght@400;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
 
-:root {
-    --wood: #4e342e;
-    --accent: #8d6e63;
-    --bg-warm: #fdfaf7;
+*, *::before, *::after { box-sizing: border-box; }
+
+.stApp {
+    background: #0D1117;
+    font-family: 'IBM Plex Sans', sans-serif;
+    color: #E6EDF3;
 }
 
-.stApp { background: var(--bg-warm); color: #2c2c2c; font-family: 'Inter', sans-serif; }
-#MainMenu, footer, header { visibility: hidden; }
+#MainMenu, footer, header, [data-testid="stToolbar"] { visibility: hidden; }
+.block-container { padding: 1.5rem 1rem 4rem; max-width: 700px; }
 
-.hero {
-    background: var(--wood);
-    color: #fbe9e7;
-    border-radius: 16px;
-    padding: 2.5rem 1.5rem;
-    margin-bottom: 2rem;
+.app-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 20px 24px;
+    background: #161B22;
+    border: 1px solid #30363D;
+    border-radius: 10px;
+    margin-bottom: 20px;
+}
+.app-header-text h1 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: #E6EDF3;
+    margin: 0;
+    letter-spacing: 0.01em;
+}
+.app-header-text p {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    color: #8B949E;
+    margin: 2px 0 0;
+    letter-spacing: 0.05em;
+}
+
+.equip-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(31,111,235,0.1);
+    border: 1px solid rgba(31,111,235,0.3);
+    color: #58A6FF;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+}
+
+.section {
+    background: #161B22;
+    border: 1px solid #30363D;
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin-bottom: 14px;
+}
+.section-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #21262D;
+}
+.section-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: #8B949E;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin: 0;
+}
+.section-dot { width: 6px; height: 6px; border-radius: 50%; background: #238636; flex-shrink: 0; }
+.section-dot.blue { background: #1F6FEB; }
+.section-dot.amber { background: #D29922; }
+
+.stSelectbox label, .stNumberInput label,
+.stTextInput label, .stTextArea label,
+.stFileUploader label, .stCameraInput label {
+    font-family: 'IBM Plex Sans', sans-serif !important;
+    font-size: 0.75rem !important;
+    font-weight: 500 !important;
+    color: #8B949E !important;
+    letter-spacing: 0.04em !important;
+    text-transform: uppercase !important;
+    margin-bottom: 4px !important;
+}
+
+.stSelectbox > div > div,
+.stTextInput > div > div > input,
+.stTextArea > div > div > textarea {
+    background: #0D1117 !important;
+    border: 1px solid #30363D !important;
+    border-radius: 6px !important;
+    color: #E6EDF3 !important;
+    font-family: 'IBM Plex Sans', sans-serif !important;
+    font-size: 0.9rem !important;
+}
+.stNumberInput > div > div > input {
+    background: #0D1117 !important;
+    border: 1px solid #30363D !important;
+    border-radius: 6px !important;
+    color: #E6EDF3 !important;
+    font-family: 'IBM Plex Mono', monospace !important;
+    font-size: 1rem !important;
+    font-weight: 500 !important;
+}
+
+.stFormSubmitButton > button, .stButton > button {
+    background: #238636 !important;
+    color: #FFFFFF !important;
+    border: 1px solid #2EA043 !important;
+    border-radius: 6px !important;
+    padding: 0.6rem 1.5rem !important;
+    font-family: 'IBM Plex Sans', sans-serif !important;
+    font-size: 0.85rem !important;
+    font-weight: 500 !important;
+    width: 100% !important;
+    margin-top: 8px !important;
+}
+
+.login-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 4rem 1rem;
+}
+.login-card {
+    background: #161B22;
+    border: 1px solid #30363D;
+    border-radius: 12px;
+    padding: 2.5rem 2rem;
+    width: 100%;
+    max-width: 340px;
     text-align: center;
 }
+.login-card h2 { font-size: 1.2rem; font-weight: 600; color: #E6EDF3; margin: 0 0 4px; }
+.login-card p { font-size: 0.7rem; color: #8B949E; margin: 0 0 1.5rem; font-family: 'IBM Plex Mono', monospace; letter-spacing: 1px; }
 
-.hero h1 { font-family: 'Playfair Display', serif; font-size: 2rem; margin: 0; }
-.beta-badge { font-size: 0.6rem; background: #d7ccc8; color: #4e342e; padding: 2px 8px; border-radius: 4px; vertical-align: middle; margin-left: 10px; }
-
-.panel {
-    background: white;
-    border: 1px solid #e0d7d0;
-    border-radius: 12px;
-    padding: 25px;
-    margin-bottom: 15px;
+.success-banner {
+    background: rgba(35,134,54,0.1);
+    border: 1px solid #238636;
+    border-radius: 8px;
+    padding: 16px 20px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-top: 12px;
 }
+.success-banner .icon { font-size: 1.1rem; flex-shrink: 0; margin-top: 2px; }
+.success-banner h4 { margin: 0 0 4px; font-size: 0.9rem; color: #3FB950; font-weight: 600; }
+.success-banner p  { margin: 0; font-size: 0.75rem; color: #8B949E; font-family: 'IBM Plex Mono', monospace; }
 
-.stButton > button, .stFormSubmitButton > button {
-    background: var(--wood) !important;
-    color: white !important;
-    border-radius: 8px !important;
-    height: 3.5rem;
-    font-weight: 700;
-    border: none !important;
-    width: 100%;
+.data-badge {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    color: #8B949E;
+    background: #0D1117;
+    border: 1px solid #21262D;
+    border-radius: 4px;
+    padding: 3px 8px;
+    display: inline-block;
+    margin-bottom: 14px;
 }
-
-.label-bold { font-weight: 700; color: var(--accent); font-size: 0.8rem; text-transform: uppercase; margin-bottom: 10px; display: block; }
 </style>
 """, unsafe_allow_html=True)
 
-
 # ==========================================
-# 2. FUNCIONES DE APOYO
-# ==========================================
-def norm_pin(v) -> str:
-    return str(v).strip().split(".")[0]
-
-
-def sanitize_image(name: str, content: bytes) -> Tuple[str, bytes, str]:
-    image = Image.open(BytesIO(content))
-    image = ImageOps.exif_transpose(image)
-    image = image.convert("RGB")
-    image.thumbnail((1200, 1200))
-    out = BytesIO()
-    image.save(out, format="JPEG", quality=80, optimize=True)
-    clean_name = f"{name.rsplit('.', 1)[0] if '.' in name else name}.jpg"
-    return clean_name, out.getvalue(), "image/jpeg"
-
-
-def get_email_body(obra, servicio, responsable, metrics, comentarios, n_fotos):
-    rows = ""
-    for label, val in metrics:
-        if val > 0:
-            rows += f"<tr><td style='padding:12px; border-bottom:1px solid #eee; color:#666;'>{label}</td><td style='padding:12px; border-bottom:1px solid #eee; text-align:right;'><b>{int(val)}</b></td></tr>"
-
-    return f"""
-    <div style="background:#fdfaf7; padding:30px; font-family:sans-serif;">
-        <div style="max-width:600px; margin:auto; background:white; border:1px solid #e0d7d0; border-radius:12px; overflow:hidden;">
-            <div style="background:#4e342e; padding:40px 20px; color:white; text-align:center;">
-                <h1 style="margin:0; font-family:serif; font-size:26px;">Estellé Parquet</h1>
-                <p style="margin:5px 0 0; opacity:0.7; font-size:12px; text-transform:uppercase; letter-spacing:2px;">Informe de Seguimiento</p>
-            </div>
-            <div style="padding:40px;">
-                <h2 style="margin:0; color:#2d2d2d; font-size:20px;">{obra}</h2>
-                <p style="color:#8d6e63; margin:5px 0 25px;">Servicio: {servicio} | {datetime.now().strftime('%d/%m/%Y')}</p>
-                <table style="width:100%; border-collapse:collapse; margin-bottom:25px;">
-                    {rows}
-                </table>
-                <div style="background:#fcf8f6; border-left:4px solid #8d6e63; padding:20px; border-radius:4px; color:#4e342e;">
-                    <b style="font-size:11px; text-transform:uppercase; color:#8d6e63;">Observaciones:</b>
-                    <p style="margin:10px 0 0; line-height:1.6;">{comentarios if comentarios else "Jornada completada con normalidad."}</p>
-                </div>
-                <p style="font-size:12px; color:#999; margin-top:30px;">Responsable: {responsable} | Fotos adjuntas: {n_fotos}</p>
-                <div style="margin-top:40px; border-top:1px solid #eee; padding-top:20px; text-align:center;">
-                    <p style="font-size:10px; color:#ccc;">Proyecto en <b>Fase BETA</b> generado por Estellé Parquet Digital.</p>
-                </div>
-            </div>
-        </div>
-    </div>
-    """
-
-
-# ==========================================
-# 3. CARGA DE DATOS
+# 3. CONNEXIÓ
 # ==========================================
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 try:
-    df_projectes = conn.read(worksheet="Projectes", ttl=0).dropna(subset=["Nom"])
-    df_templates = conn.read(worksheet="Config_Templates", ttl=0).dropna(subset=["Tipus"])
-    df_equips = conn.read(worksheet="Equips", ttl=0).dropna(subset=["Equip"])
+    df_projectes = conn.read(worksheet="Projectes", ttl=0).dropna(subset=['Nom'])
+    df_templates = conn.read(worksheet="Config_Templates", ttl=0).dropna(subset=['Tipus'])
+    df_equips    = conn.read(worksheet="Equips", ttl=0).dropna(subset=['Equip'])
 except Exception as e:
-    st.error("Error de conexión con Google Sheets.")
-    st.caption(str(e))
+    st.error("No s'ha pogut connectar amb Google Sheets")
+    with st.expander("Detall de l'error"):
+        st.code(str(e))
     st.stop()
 
-if "auth_user" not in st.session_state:
-    st.markdown('<div class="hero"><h1>Estellé Parquet <span class="beta-badge">BETA</span></h1><p>Acceso para instaladores</p></div>', unsafe_allow_html=True)
-    with st.form("login"):
-        pin_in = st.text_input("PIN de Equipo", type="password")
-        if st.form_submit_button("Entrar"):
-            match = df_equips[df_equips["PIN"].apply(norm_pin) == norm_pin(pin_in)]
-            if not match.empty:
-                st.session_state.auth_user = match.iloc[0]["Equip"]
-                st.rerun()
-            else:
-                st.error("PIN incorrecto")
+# ==========================================
+# 4. AUTENTICACIÓ PER PIN
+# ==========================================
+if 'equip_autenticat' not in st.session_state:
+    st.session_state.equip_autenticat = None
+
+if st.session_state.equip_autenticat is None:
+    st.markdown('<div class="login-wrap">', unsafe_allow_html=True)
+    st.markdown("""
+    <div class="login-card">
+        <h2>Estellé Parquet</h2>
+        <p>SISTEMA DE SEGUIMENT D'OBRA</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    with st.form("login_form"):
+        pin_input = st.text_input("PIN d'equip", type="password", placeholder="····")
+        login_btn = st.form_submit_button("Accedir")
+
+    if login_btn:
+        # Normalitzem el PIN: eliminem espais i el .0 que afegeix Sheets als números
+        def norm_pin(v):
+            s = str(v).strip().split('.')[0]  # "456.0" -> "456"
+            return s
+
+        pin_net   = norm_pin(pin_input)
+        pin_match = df_equips[df_equips['PIN'].apply(norm_pin) == pin_net]
+
+        if not pin_match.empty:
+            st.session_state.equip_autenticat = pin_match.iloc[0]['Equip']
+            st.rerun()
+        else:
+            st.error("PIN incorrecte. Consulta el teu responsable.")
+    st.markdown('</div>', unsafe_allow_html=True)
     st.stop()
 
+equip_actual = st.session_state.equip_autenticat
 
 # ==========================================
-# 4. CUERPO DE LA APP
+# 5. FILTRAR PROJECTES PER EQUIP
 # ==========================================
-st.markdown(f'<div class="hero"><h1>{st.session_state.auth_user}</h1><p>{datetime.now().strftime("%d / %m / %Y")}</p></div>', unsafe_allow_html=True)
+if 'Equip' in df_projectes.columns:
+    df_proj = df_projectes[
+        (df_projectes['Equip'].isna()) |
+        (df_projectes['Equip'].astype(str).str.strip() == '') |
+        (df_projectes['Equip'].astype(str).str.strip() == equip_actual)
+    ]
+else:
+    df_proj = df_projectes
 
-st.markdown('<div class="panel">', unsafe_allow_html=True)
-col_a, col_b = st.columns(2)
-obra_sel = col_a.selectbox("Proyecto", df_projectes["Nom"].unique())
-tipus_sel = col_b.selectbox("Tipo de Trabajo", df_templates["Tipus"].unique())
+if df_proj.empty:
+    st.warning("No hi ha projectes assignats a aquest equip.")
+    st.stop()
+
+# ==========================================
+# 6. CAPÇALERA
+# ==========================================
+st.markdown(f"""
+<div class="app-header">
+    <div class="app-header-text">
+        <h1>Estellé Parquet</h1>
+        <p>SEGUIMENT D'OBRA · {equip_actual.upper()}</p>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+col_eq, col_out = st.columns([4, 1])
+with col_eq:
+    st.markdown(f'<div class="equip-badge">⬡ {equip_actual}</div>', unsafe_allow_html=True)
+with col_out:
+    if st.button("Sortir"):
+        st.session_state.equip_autenticat = None
+        st.rerun()
+
+st.markdown(f'<div class="data-badge">{datetime.now().strftime("%d/%m/%Y · %H:%M")}</div>', unsafe_allow_html=True)
+
+# ==========================================
+# 7. SELECCIÓ
+# ==========================================
+st.markdown('<div class="section"><div class="section-header"><div class="section-dot blue"></div><p class="section-title">Assignació</p></div>', unsafe_allow_html=True)
+
+col1, col2 = st.columns(2)
+with col1:
+    obra_sel = st.selectbox("Projecte", df_proj['Nom'].unique())
+    dades_p  = df_proj[df_proj['Nom'] == obra_sel].iloc[0]
+with col2:
+    tipus_sel = st.selectbox("Tipus de treball", df_templates['Tipus'].unique())
+    dades_t   = df_templates[df_templates['Tipus'] == tipus_sel].iloc[0]
+
+# Logo del client
+logo_url = str(dades_p.get('Logo_client', '')).strip()
+if logo_url.startswith('http'):
+    st.markdown(f"""
+    <div style="margin-top:12px;padding:10px 14px;background:#0D1117;border:1px solid #21262D;
+                border-radius:8px;display:flex;align-items:center;gap:12px">
+        <img src="{logo_url}" style="height:30px;width:auto;object-fit:contain">
+        <span style="font-size:0.75rem;color:#8B949E;font-family:'IBM Plex Mono',monospace">{obra_sel}</span>
+    </div>
+    """, unsafe_allow_html=True)
+
 st.markdown('</div>', unsafe_allow_html=True)
 
-dades_p = df_projectes[df_projectes["Nom"] == obra_sel].iloc[0]
-dades_t = df_templates[df_templates["Tipus"] == tipus_sel].iloc[0]
+# ==========================================
+# 8. FORMULARI
+# ==========================================
+st.markdown('<div class="section"><div class="section-header"><div class="section-dot amber"></div><p class="section-title">Dades de la jornada</p></div>', unsafe_allow_html=True)
 
-with st.form("main_form", clear_on_submit=True):
-    st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<span class="label-bold">Datos y Avance</span>', unsafe_allow_html=True)
+with st.form("form_obra", clear_on_submit=True):
 
-    m_cols = st.columns(3)
-    valors_final = []
-    for i, field in enumerate(["Camp1", "Camp2", "Camp3"]):
-        nombre = dades_t.get(field, "")
-        if pd.notna(nombre) and str(nombre).strip():
-            with m_cols[i]:
-                v = st.number_input(str(nombre), min_value=0, step=1, format="%d")
-                valors_final.append((str(nombre), v))
+    camps_actius = []
+    for ck in ['Camp1', 'Camp2', 'Camp3']:
+        v = dades_t.get(ck, "")
+        if pd.notna(v) and str(v).strip():
+            camps_actius.append(str(v))
 
-    comentarios = st.text_area("Notas / Incidencias")
+    valors = [0.0, 0.0, 0.0]
+    if camps_actius:
+        cols_n = st.columns(len(camps_actius))
+        for idx, nom in enumerate(camps_actius):
+            with cols_n[idx]:
+                valors[idx] = st.number_input(nom, min_value=0.0, step=0.1, format="%.2f")
 
-    # Cámara + galería para móvil/tablet
-    foto_cam = st.camera_input("Hacer foto")
-    fotos = st.file_uploader(
-        "Subir fotos",
-        accept_multiple_files=True,
-        type=["jpg", "png", "jpeg", "webp"],
-        label_visibility="collapsed",
-    )
-    st.markdown('</div>', unsafe_allow_html=True)
+    v1, v2, v3 = valors
 
-    # FIRMAS
-    st.markdown('<div class="panel">', unsafe_allow_html=True)
-    col_sig1, col_sig2 = st.columns(2)
-    with col_sig1:
-        st.markdown('<span class="label-bold">Firma Responsable</span>', unsafe_allow_html=True)
-        if st_signature_pad:
-            st_signature_pad(key="sig_resp", height=150, background_color="#fafafa")
-        else:
-            st.text_input("Nombre responsable (firma no disponible)", key="sig_resp_fallback")
-    with col_sig2:
-        st.markdown('<span class="label-bold">Firma Cliente</span>', unsafe_allow_html=True)
-        if st_signature_pad:
-            st_signature_pad(key="sig_cli", height=150, background_color="#fafafa")
-        else:
-            st.text_input("Nombre cliente (firma no disponible)", key="sig_cli_fallback")
-    st.markdown('</div>', unsafe_allow_html=True)
+    comentaris = st.text_area("Observacions", placeholder="Treball realitzat, incidències, material...", height=85)
+    operari    = st.text_input("Operari responsable", value="Luis")
 
-    enviar = st.form_submit_button("ENVIAR INFORME PROFESIONAL")
+    st.markdown("<div style='margin-top:6px'></div>", unsafe_allow_html=True)
 
+    tab_cam, tab_gal = st.tabs(["📷  Càmera", "🖼  Galeria"])
+    with tab_cam:
+        foto_camera = st.camera_input("Fer foto", label_visibility="collapsed")
+    with tab_gal:
+        fotos_fitxer = st.file_uploader(
+            "Selecciona imatges",
+            type=["jpg", "jpeg", "png", "webp"],
+            accept_multiple_files=True,
+            label_visibility="collapsed"
+        )
+
+    subm = st.form_submit_button("▶  Enviar informe")
+
+st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
-# 5. ENVÍO
+# 9. ENVIAMENT
 # ==========================================
-if enviar:
-    with st.spinner("Sincronizando..."):
+if subm:
+    if not operari.strip():
+        st.warning("Cal indicar l'operari responsable.")
+        st.stop()
+
+    totes_fotos = []
+    if foto_camera:
+        totes_fotos.append(("foto_camera.jpg", foto_camera.getvalue(), "image/jpeg"))
+    if fotos_fitxer:
+        for f in fotos_fitxer:
+            totes_fotos.append((f.name, f.getvalue(), f.type))
+
+    with st.spinner("Enviant informe..."):
+        errors = []
+
+        # A. Sheets
         try:
-            # 1. Registro Sheets
             try:
-                df_hist = conn.read(worksheet="Seguiment", ttl=0).dropna(how="all")
+                df_seg = conn.read(worksheet="Seguiment", ttl=0).dropna(how='all')
             except Exception:
-                df_hist = pd.DataFrame()
+                df_seg = pd.DataFrame(columns=[
+                    "Data","Hora","Equip","Projecte","Tipus",
+                    "Dada1","Dada2","Dada3","Comentaris","Operari","Fotos"
+                ])
 
-            nueva = pd.DataFrame([{
+            nova = pd.DataFrame([{
                 "Data": datetime.now().strftime("%d/%m/%Y"),
+                "Hora": datetime.now().strftime("%H:%M"),
+                "Equip": equip_actual,
                 "Projecte": obra_sel,
                 "Tipus": tipus_sel,
-                "Comentaris": comentarios,
-                "Operari": st.session_state.auth_user,
-                "Fotos": (1 if foto_cam else 0) + (len(fotos) if fotos else 0),
+                "Dada1": v1, "Dada2": v2, "Dada3": v3,
+                "Comentaris": comentaris,
+                "Operari": operari,
+                "Fotos": len(totes_fotos)
             }])
+            conn.update(worksheet="Seguiment", data=pd.concat([df_seg, nova], ignore_index=True))
+        except Exception as e:
+            errors.append(f"Sheets: {e}")
 
-            conn.update(worksheet="Seguiment", data=pd.concat([df_hist, nueva], ignore_index=True))
+        # B. Email
+        try:
+            smtp_cfg    = st.secrets["smtp"]
+            emails_raw  = str(dades_p.get('Emails_Contacte', ''))
+            destinataris = [e.strip() for e in emails_raw.split(',') if e.strip()]
 
-            # 2. Email
-            smtp = st.secrets["smtp"]
-            msg = MIMEMultipart()
-            msg["Subject"] = f"Seguimiento proyecto {obra_sel} · Estellé Parquet"
-            msg["From"] = f"Estellé Parquet <{smtp['user']}>"
+            if destinataris:
+                msg = MIMEMultipart('mixed')
+                msg['Subject'] = f"[Seguiment] {obra_sel} · {tipus_sel} · {datetime.now().strftime('%d/%m/%Y')}"
+                msg['From']    = f"Estellé Parquet <{smtp_cfg['user']}>"
+                msg['To']      = ", ".join(destinataris)
 
-            destinatarios = [e.strip() for e in str(dades_p.get("Emails_Contacte", "")).split(",") if e.strip()]
-            if not destinatarios:
-                raise ValueError("No hay destinatarios en 'Emails_Contacte'")
+                files_m = ""
+                for idx, nom in enumerate(camps_actius):
+                    files_m += f"""<tr>
+                        <td style="padding:8px 16px;border-bottom:1px solid #21262D;color:#8B949E;font-size:12px;font-family:monospace">{nom}</td>
+                        <td style="padding:8px 16px;border-bottom:1px solid #21262D;color:#E6EDF3;font-size:14px;font-family:monospace;font-weight:600;text-align:right">{[v1,v2,v3][idx]}</td>
+                    </tr>"""
 
-            msg["To"] = ", ".join(destinatarios)
+                logo_h = f'<img src="{logo_url}" style="height:26px;width:auto;margin-bottom:4px"><br>' if logo_url.startswith('http') else ''
+                obs_h  = f'<tr><td colspan="2" style="padding:14px 16px"><div style="background:#161B22;border-left:3px solid #238636;padding:10px 12px;border-radius:0 6px 6px 0;color:#C9D1D9;font-size:13px;line-height:1.6">{comentaris}</div></td></tr>' if comentaris.strip() else ''
+                foto_h = f'<tr><td colspan="2" style="padding:10px 16px;color:#58A6FF;font-size:12px;font-family:monospace">📎 {len(totes_fotos)} imatge(s) adjuntada(s)</td></tr>' if totes_fotos else ''
 
-            total_fotos = (1 if foto_cam else 0) + (len(fotos) if fotos else 0)
-            body = get_email_body(obra_sel, tipus_sel, st.session_state.auth_user, valors_final, comentarios, total_fotos)
-            msg.attach(MIMEText(body, "html"))
+                html = f"""<!DOCTYPE html><html><body style="margin:0;padding:0;background:#0D1117;font-family:'Helvetica Neue',sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#0D1117;padding:24px 0"><tr><td align="center">
+<table width="540" cellpadding="0" cellspacing="0" style="background:#161B22;border:1px solid #30363D;border-radius:10px;overflow:hidden">
+<tr><td style="padding:20px 16px;border-bottom:1px solid #21262D">
+    {logo_h}
+    <table width="100%"><tr>
+        <td><div style="font-size:15px;font-weight:600;color:#E6EDF3">Informe de Seguiment</div>
+            <div style="font-size:11px;color:#8B949E;font-family:monospace;margin-top:2px">{obra_sel.upper()} · {tipus_sel.upper()}</div></td>
+        <td style="text-align:right"><div style="font-size:11px;color:#8B949E;font-family:monospace">{datetime.now().strftime('%d/%m/%Y · %H:%M')}</div></td>
+    </tr></table>
+</td></tr>
+<tr><td><table width="100%">
+<tr>
+    <td width="50%" style="padding:12px 16px;border-right:1px solid #21262D;border-bottom:1px solid #21262D">
+        <div style="font-size:9px;color:#8B949E;letter-spacing:2px;text-transform:uppercase;font-family:monospace;margin-bottom:3px">Equip</div>
+        <div style="font-size:14px;color:#E6EDF3;font-weight:500">{equip_actual}</div>
+    </td>
+    <td width="50%" style="padding:12px 16px;border-bottom:1px solid #21262D">
+        <div style="font-size:9px;color:#8B949E;letter-spacing:2px;text-transform:uppercase;font-family:monospace;margin-bottom:3px">Operari</div>
+        <div style="font-size:14px;color:#E6EDF3;font-weight:500">{operari}</div>
+    </td>
+</tr>
+{files_m}
+{obs_h}
+{foto_h}
+</table></td></tr>
+<tr><td style="padding:12px 16px;border-top:1px solid #21262D;text-align:center">
+    <div style="font-size:9px;color:#484F58;font-family:monospace;letter-spacing:1px">ESTELLÉ PARQUET · SISTEMA AUTOMATITZAT DE SEGUIMENT</div>
+</td></tr>
+</table></td></tr></table></body></html>"""
 
-            # Adjuntar foto cámara
-            if foto_cam:
-                fname, fcontent, _fmime = sanitize_image("foto_camara", foto_cam.getvalue())
-                part = MIMEBase("image", "jpeg")
-                part.set_payload(fcontent)
-                encoders.encode_base64(part)
-                part.add_header("Content-Disposition", f"attachment; filename={fname}")
-                msg.attach(part)
+                msg.attach(MIMEText(html, 'html'))
 
-            # Adjuntar galería
-            if fotos:
-                for f in fotos:
-                    fname, fcontent, _fmime = sanitize_image(f.name, f.getvalue())
-                    part = MIMEBase("image", "jpeg")
-                    part.set_payload(fcontent)
-                    encoders.encode_base64(part)
-                    part.add_header("Content-Disposition", f"attachment; filename={fname}")
-                    msg.attach(part)
+                for nom_f, contingut, mime_type in totes_fotos:
+                    parts = mime_type.split('/')
+                    adjunt = MIMEBase(parts[0], parts[1] if len(parts) > 1 else 'octet-stream')
+                    adjunt.set_payload(contingut)
+                    encoders.encode_base64(adjunt)
+                    adjunt.add_header('Content-Disposition', 'attachment', filename=nom_f)
+                    msg.attach(adjunt)
 
-            with smtplib.SMTP(smtp["server"], int(smtp["port"])) as server:
-                server.starttls()
-                server.login(smtp["user"], smtp["password"])
-                server.sendmail(smtp["user"], destinatarios, msg.as_string())
-
-            st.success("¡Enviado con éxito!")
-            st.balloons()
+                with smtplib.SMTP(smtp_cfg['server'], smtp_cfg['port']) as s:
+                    s.starttls()
+                    s.login(smtp_cfg['user'], smtp_cfg['password'])
+                    s.sendmail(smtp_cfg['user'], destinataris, msg.as_string())
 
         except Exception as e:
-            st.error(f"Error: {e}")
+            errors.append(f"Email: {e}")
+
+    # Resultat
+    if not errors:
+        fotos_txt = f"{len(totes_fotos)} foto(s) adjuntada(s)" if totes_fotos else "Sense fotografies"
+        st.markdown(f"""
+        <div class="success-banner">
+            <div class="icon">✔</div>
+            <div>
+                <h4>Informe registrat correctament</h4>
+                <p>{obra_sel} · {tipus_sel} · {datetime.now().strftime('%d/%m/%Y %H:%M')} · {fotos_txt}</p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        for err in errors:
+            st.error(err)

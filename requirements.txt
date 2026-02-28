@@ -1,8 +1,5 @@
 streamlit
+st-gsheets-connection
 pandas
-plotly
-gspread
-oauth2client
 Pillow
-jinja2
 streamlit-signature-pad

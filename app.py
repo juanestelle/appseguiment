@@ -1,4 +1,3 @@
-```python
 import smtplib
 import urllib.request
 import ssl
@@ -548,4 +547,3 @@ if enviar:
     else:
         for err in errors:
             st.error(err)
-```

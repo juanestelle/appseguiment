@@ -3,3 +3,7 @@ st-gsheets-connection
 pandas
 Pillow
 streamlit-signature-pad
+plotly
+gspread
+oauth2client
+jinja2

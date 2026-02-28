@@ -154,9 +154,11 @@ def canvas_to_bytes(canvas_resp) -> bytes | None:
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 try:
-    df_projectes = conn.read(worksheet="Projectes",       ttl=0).dropna(subset=["Nom"])
-    df_templates = conn.read(worksheet="Config_Templates", ttl=0).dropna(subset=["Tipus"])
-    df_equips    = conn.read(worksheet="Equips",           ttl=0).dropna(subset=["Equip"])
+    # ttl=300 → les dades es cachegen 5 minuts (evita el límit de 60 req/min de Google)
+    # Només el Seguiment (escriptura) s'ha de llegir fresc → ttl=0 però només al moment d'enviar
+    df_projectes = conn.read(worksheet="Projectes",        ttl=300).dropna(subset=["Nom"])
+    df_templates = conn.read(worksheet="Config_Templates", ttl=300).dropna(subset=["Tipus"])
+    df_equips    = conn.read(worksheet="Equips",           ttl=300).dropna(subset=["Equip"])
 except Exception as e:
     st.error("Error de connexió amb Google Sheets.")
     with st.expander("Detall"):

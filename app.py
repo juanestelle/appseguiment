@@ -6,13 +6,14 @@ import re
 from datetime import datetime
 from io import BytesIO
 from typing import Tuple, Optional
+from urllib.parse import urlparse, parse_qs
 
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 from PIL import Image, ImageOps
 from email import encoders
 from email.mime.base import MIMEBase
+from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from streamlit_gsheets import GSheetsConnection
@@ -64,6 +65,7 @@ st.markdown("""
 def norm_pin(v) -> str:
     return str(v).strip().split(".")[0]
 
+
 def sanitize_image(name: str, content: bytes) -> Tuple[str, bytes, str]:
     img = Image.open(BytesIO(content))
     img = ImageOps.exif_transpose(img)
@@ -71,14 +73,14 @@ def sanitize_image(name: str, content: bytes) -> Tuple[str, bytes, str]:
     img.thumbnail((1400, 1400))
     out = BytesIO()
     img.save(out, format="JPEG", quality=85)
-    return f"{name}.jpg", out.getvalue(), "image/jpeg"
+    base_name = name.rsplit(".", 1)[0]
+    return f"{base_name}.jpg", out.getvalue(), "image/jpeg"
+
 
 def canvas_to_bytes(canvas_result) -> Optional[bytes]:
-    """Retorna bytes JPEG si s'ha dibuixat algo, None si el canvas és en blanc."""
     if canvas_result is None or canvas_result.image_data is None:
         return None
     arr = canvas_result.image_data.astype("uint8")
-    # El canal alpha = 0 vol dir transparent (no dibuixat)
     if arr[:, :, 3].max() < 10:
         return None
     img = Image.fromarray(arr, "RGBA").convert("RGB")
@@ -86,31 +88,63 @@ def canvas_to_bytes(canvas_result) -> Optional[bytes]:
     img.save(out, format="JPEG", quality=90)
     return out.getvalue()
 
-def logo_to_b64_email(url: str) -> Optional[str]:
-    """Descarrega el logo per embeure'l a l'email. Retorna base64 o None."""
-    if not url or not url.startswith("http"):
+
+def normalize_logo_url(url: str) -> str:
+    if not url:
+        return ""
+    u = url.strip()
+
+    m = re.search(r"/file/d/([a-zA-Z0-9_-]+)", u)
+    if m:
+        return f"https://drive.google.com/uc?export=view&id={m.group(1)}"
+
+    if "drive.google.com/open" in u and "id=" in u:
+        q = parse_qs(urlparse(u).query)
+        fid = q.get("id", [""])[0]
+        if fid:
+            return f"https://drive.google.com/uc?export=view&id={fid}"
+
+    if "dropbox.com" in u:
+        return u.replace("?dl=0", "?raw=1").replace("&dl=0", "&raw=1")
+
+    return u
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_logo_jpeg(url: str) -> Optional[bytes]:
+    u = normalize_logo_url(url)
+    if not u.startswith("http"):
         return None
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    try:
-        req = urllib.request.Request(url, headers={
+
+    req = urllib.request.Request(
+        u,
+        headers={
             "User-Agent": "Mozilla/5.0",
             "Accept": "image/*,*/*;q=0.8",
-        })
-        with urllib.request.urlopen(req, timeout=10, context=ctx) as r:
+        },
+    )
+    ctx = ssl.create_default_context()
+
+    try:
+        with urllib.request.urlopen(req, timeout=12, context=ctx) as r:
             data = r.read()
-            ct = r.headers.get("Content-Type", "image/png").split(";")[0].strip()
-            if "image" not in ct:
-                return None
-        return f"data:{ct};base64,{base64.b64encode(data).decode()}"
+
+        img = Image.open(BytesIO(data))
+        img = ImageOps.exif_transpose(img).convert("RGB")
+        img.thumbnail((1200, 400))
+        out = BytesIO()
+        img.save(out, format="JPEG", quality=90, optimize=True)
+        return out.getvalue()
     except Exception:
         return None
 
+
 def fmt_valor(v) -> str:
-    if v is None: return "0"
+    if v is None:
+        return "0"
     f = float(v)
     return str(int(f)) if f == int(f) else f"{f:.1f}"
+
 
 def img_to_thumb_b64(content: bytes) -> str:
     img = Image.open(BytesIO(content)).convert("RGB")
@@ -125,12 +159,13 @@ def img_to_thumb_b64(content: bytes) -> str:
 # ==========================================
 conn = st.connection("gsheets", type=GSheetsConnection)
 try:
-    df_projectes = conn.read(worksheet="Projectes",        ttl=300).dropna(subset=["Nom"])
+    df_projectes = conn.read(worksheet="Projectes", ttl=300).dropna(subset=["Nom"])
     df_templates = conn.read(worksheet="Config_Templates", ttl=300).dropna(subset=["Tipus"])
-    df_equips    = conn.read(worksheet="Equips",           ttl=300).dropna(subset=["Equip"])
+    df_equips = conn.read(worksheet="Equips", ttl=300).dropna(subset=["Equip"])
 except Exception as e:
     st.error("Error de conexión con Google Sheets.")
-    with st.expander("Detalle"): st.code(str(e))
+    with st.expander("Detalle"):
+        st.code(str(e))
     st.stop()
 
 
@@ -145,11 +180,11 @@ if "auth_user" not in st.session_state:
         if st.form_submit_button("ENTRAR"):
             match = df_equips[df_equips["PIN"].apply(norm_pin) == norm_pin(pin_in)]
             if not match.empty:
-                st.session_state.auth_user       = match.iloc[0]["Equip"]
+                st.session_state.auth_user = match.iloc[0]["Equip"]
                 st.session_state.fotos_acumulades = []
-                st.session_state.camara_activa    = False
+                st.session_state.camara_activa = False
                 st.session_state.firma_resp_bytes = None
-                st.session_state.firma_cli_bytes  = None
+                st.session_state.firma_cli_bytes = None
                 st.rerun()
             else:
                 st.error("PIN incorrecto. Consulta a tu responsable.")
@@ -157,11 +192,10 @@ if "auth_user" not in st.session_state:
 
 equip_actual = st.session_state.auth_user
 
-# Init session state
 defaults = {
     "fotos_acumulades": [],
     "camara_activa": False,
-    "firma_resp_bytes": None,   # ← firmes guardades explícitament
+    "firma_resp_bytes": None,
     "firma_cli_bytes": None,
 }
 for k, v in defaults.items():
@@ -174,9 +208,9 @@ for k, v in defaults.items():
 # ==========================================
 if "Equip" in df_projectes.columns:
     df_proj = df_projectes[
-        df_projectes["Equip"].isna() |
-        (df_projectes["Equip"].astype(str).str.strip() == "") |
-        (df_projectes["Equip"].astype(str).str.strip() == equip_actual)
+        df_projectes["Equip"].isna()
+        | (df_projectes["Equip"].astype(str).str.strip() == "")
+        | (df_projectes["Equip"].astype(str).str.strip() == equip_actual)
     ]
 else:
     df_proj = df_projectes
@@ -197,7 +231,7 @@ with col_hd:
 with col_out:
     st.markdown("<div style='margin-top:22px'>", unsafe_allow_html=True)
     if st.button("Salir"):
-        for k in ["auth_user","fotos_acumulades","camara_activa","firma_resp_bytes","firma_cli_bytes"]:
+        for k in ["auth_user", "fotos_acumulades", "camara_activa", "firma_resp_bytes", "firma_cli_bytes"]:
             st.session_state.pop(k, None)
         st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
@@ -207,27 +241,31 @@ with col_out:
 # SELECCIÓ PROJECTE
 # ==========================================
 col_a, col_b = st.columns(2)
-obra_sel  = col_a.selectbox("Proyecto", df_proj["Nom"].unique())
+obra_sel = col_a.selectbox("Proyecto", df_proj["Nom"].unique())
 tipus_sel = col_b.selectbox("Trabajo realizado", df_templates["Tipus"].unique())
 
 dades_p = df_proj[df_proj["Nom"] == obra_sel].iloc[0]
 dades_t = df_templates[df_templates["Tipus"] == tipus_sel].iloc[0]
 
-# Logo del CLIENT — via components.html (iframe propi, sense restriccions CSP)
 logo_url = str(dades_p.get("Logo_client", "")).strip()
-if logo_url.startswith("http"):
-    components.html(f"""
-    <div style="display:flex;align-items:center;gap:14px;padding:4px 0 10px">
-        <img src="{logo_url}"
-             style="height:40px;width:auto;max-width:150px;object-fit:contain"
-             onerror="this.style.display='none'">
-        <span style="font-size:15px;font-weight:600;color:#4e342e;font-family:Inter,sans-serif">
-            {obra_sel}
-        </span>
-    </div>""", height=60)
+logo_bytes = fetch_logo_jpeg(logo_url)
+
+if logo_bytes:
+    c1, c2 = st.columns([1, 3])
+    with c1:
+        st.image(logo_bytes, width=130)
+    with c2:
+        st.markdown(
+            f"""<div style="margin-top:8px;font-size:1rem;font-weight:600;color:#4e342e">
+            {obra_sel}</div>""",
+            unsafe_allow_html=True,
+        )
 else:
-    st.markdown(f"""<div style="margin:8px 0 16px;font-size:0.9rem;font-weight:600;color:#4e342e">
-        {obra_sel}</div>""", unsafe_allow_html=True)
+    st.markdown(
+        f"""<div style="margin:8px 0 16px;font-size:0.9rem;font-weight:600;color:#4e342e">
+        {obra_sel}</div>""",
+        unsafe_allow_html=True,
+    )
 
 
 # ==========================================
@@ -242,21 +280,20 @@ with st.form("main_form", clear_on_submit=False):
         if pd.notna(val) and str(val).strip():
             camps_actius.append(str(val))
 
-    valors = [None, None, None]
+    valors = [0.0, 0.0, 0.0]
     if camps_actius:
         m_cols = st.columns(len(camps_actius))
         for i, nom in enumerate(camps_actius):
             with m_cols[i]:
-                valors[i] = st.number_input(nom, min_value=0.0, value=None,
-                                             step=0.5, format="%.1f", placeholder="0")
-    v1 = valors[0] or 0.0
-    v2 = valors[1] or 0.0
-    v3 = valors[2] or 0.0
+                valors[i] = st.number_input(nom, min_value=0.0, value=0.0, step=0.5, format="%.1f")
+    v1, v2, v3 = valors[0], valors[1], valors[2]
 
     st.markdown("<div style='margin:12px 0'></div>", unsafe_allow_html=True)
-    comentaris = st.text_area("Comentarios de la jornada",
-                               placeholder="Describe detalles relevantes del trabajo...",
-                               height=90)
+    comentaris = st.text_area(
+        "Comentarios de la jornada",
+        placeholder="Describe detalles relevantes del trabajo...",
+        height=90,
+    )
     enviar = st.form_submit_button("▶  FINALIZAR Y ENVIAR INFORME")
 
 
@@ -281,7 +318,7 @@ with tab_cam:
                 if foto_cam is not None:
                     n, b, m = sanitize_image(
                         f"foto_{len(st.session_state.fotos_acumulades)+1:02d}",
-                        foto_cam.getvalue()
+                        foto_cam.getvalue(),
                     )
                     st.session_state.fotos_acumulades.append((n, b, m))
                     st.session_state.camara_activa = False
@@ -292,11 +329,15 @@ with tab_cam:
                 st.rerun()
 
 with tab_gal:
-    fotos_gal = st.file_uploader("Seleccionar imágenes", type=["jpg","jpeg","png","webp"],
-                                  accept_multiple_files=True, label_visibility="collapsed")
+    fotos_gal = st.file_uploader(
+        "Seleccionar imágenes",
+        type=["jpg", "jpeg", "png", "webp"],
+        accept_multiple_files=True,
+        label_visibility="collapsed",
+    )
     if fotos_gal and st.button("＋ Añadir selección"):
         for f in fotos_gal:
-            n, b, m = sanitize_image(f.name.rsplit(".", 1)[0], f.getvalue())
+            n, b, m = sanitize_image(f.name, f.getvalue())
             st.session_state.fotos_acumulades.append((n, b, m))
         st.rerun()
 
@@ -311,12 +352,11 @@ if st.session_state.fotos_acumulades:
         st.session_state.fotos_acumulades = []
         st.rerun()
 
-st.markdown('</div>', unsafe_allow_html=True)
+st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ==========================================
-# FIRMES — guardades en session_state amb botó explícit
-# El canvas es reseteja en cada rerun, per això cal guardar-la manualment
+# FIRMES
 # ==========================================
 st.markdown('<div class="panel">', unsafe_allow_html=True)
 st.markdown('<span class="label-up">Firmas</span>', unsafe_allow_html=True)
@@ -326,12 +366,17 @@ with col_f1:
     st.caption("Responsable de obra")
     st.markdown('<div class="firma-box">', unsafe_allow_html=True)
     canvas_resp = st_canvas(
-        fill_color="rgba(255,255,255,0)", stroke_width=2,
-        stroke_color="#1a1a1a", background_color="#fafafa",
-        height=140, key="canvas_resp", update_streamlit=True,
-        drawing_mode="freedraw", display_toolbar=False
+        fill_color="rgba(255,255,255,0)",
+        stroke_width=2,
+        stroke_color="#1a1a1a",
+        background_color="#fafafa",
+        height=140,
+        key="canvas_resp",
+        update_streamlit=True,
+        drawing_mode="freedraw",
+        display_toolbar=False,
     )
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
     if st.button("💾 Guardar firma responsable"):
         b = canvas_to_bytes(canvas_resp)
         if b:
@@ -346,12 +391,17 @@ with col_f2:
     st.caption("Cliente / Propietario")
     st.markdown('<div class="firma-box">', unsafe_allow_html=True)
     canvas_cli = st_canvas(
-        fill_color="rgba(255,255,255,0)", stroke_width=2,
-        stroke_color="#1a1a1a", background_color="#fafafa",
-        height=140, key="canvas_cli", update_streamlit=True,
-        drawing_mode="freedraw", display_toolbar=False
+        fill_color="rgba(255,255,255,0)",
+        stroke_width=2,
+        stroke_color="#1a1a1a",
+        background_color="#fafafa",
+        height=140,
+        key="canvas_cli",
+        update_streamlit=True,
+        drawing_mode="freedraw",
+        display_toolbar=False,
     )
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
     if st.button("💾 Guardar firma cliente"):
         b = canvas_to_bytes(canvas_cli)
         if b:
@@ -362,16 +412,15 @@ with col_f2:
     if st.session_state.firma_cli_bytes:
         st.markdown('<div class="firma-ok">✔ Firma cliente lista</div>', unsafe_allow_html=True)
 
-st.markdown('</div>', unsafe_allow_html=True)
+st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ==========================================
 # ENVIAMENT
 # ==========================================
 if enviar:
-    # Usem les firmes guardades en session_state (no del canvas directament)
     firma_resp = st.session_state.firma_resp_bytes
-    firma_cli  = st.session_state.firma_cli_bytes
+    firma_cli = st.session_state.firma_cli_bytes
 
     totes_fotos = list(st.session_state.fotos_acumulades)
     if firma_resp:
@@ -387,44 +436,44 @@ if enviar:
             try:
                 df_seg = conn.read(worksheet="Seguiment", ttl=0).dropna(how="all")
             except Exception:
-                df_seg = pd.DataFrame(columns=[
-                    "Fecha","Hora","Equipo","Proyecto","Trabajo",
-                    "Dato1","Dato2","Dato3","Comentarios","Fotos","Firmas"
-                ])
+                df_seg = pd.DataFrame(
+                    columns=[
+                        "Fecha", "Hora", "Equipo", "Proyecto", "Trabajo",
+                        "Dato1", "Dato2", "Dato3", "Comentarios", "Fotos", "Firmas"
+                    ]
+                )
+
             nova = pd.DataFrame([{
-                "Fecha":       datetime.now().strftime("%d/%m/%Y"),
-                "Hora":        datetime.now().strftime("%H:%M"),
-                "Equipo":      equip_actual,
-                "Proyecto":    obra_sel,
-                "Trabajo":     tipus_sel,
-                "Dato1":       v1, "Dato2": v2, "Dato3": v3,
+                "Fecha": datetime.now().strftime("%d/%m/%Y"),
+                "Hora": datetime.now().strftime("%H:%M"),
+                "Equipo": equip_actual,
+                "Proyecto": obra_sel,
+                "Trabajo": tipus_sel,
+                "Dato1": v1, "Dato2": v2, "Dato3": v3,
                 "Comentarios": comentaris,
-                "Fotos":       len(st.session_state.fotos_acumulades),
-                "Firmas":      ("Resp" if firma_resp else "") + (" · Cliente" if firma_cli else "")
+                "Fotos": len(st.session_state.fotos_acumulades),
+                "Firmas": ("Resp" if firma_resp else "") + (" · Cliente" if firma_cli else ""),
             }])
+
             conn.update(worksheet="Seguiment", data=pd.concat([df_seg, nova], ignore_index=True))
         except Exception as e:
             errors.append(f"Sheets: {e}")
 
         # B. Email
         try:
-            smtp_cfg     = st.secrets["smtp"]
-            emails_raw   = str(dades_p.get("Emails_Contacte", ""))
+            smtp_cfg = st.secrets["smtp"]
+            emails_raw = str(dades_p.get("Emails_Contacte", ""))
             destinataris = [e.strip() for e in emails_raw.split(",") if e.strip()]
 
             if destinataris:
                 msg = MIMEMultipart("mixed")
-                msg["Subject"]  = f"Seguimiento del proyecto {obra_sel} - Estellé parquet"
-                msg["From"]     = "Estellé Parquet <noreply@estelleparquet.com>"
+                msg["Subject"] = f"Seguimiento del proyecto {obra_sel} - Estellé parquet"
+                msg["From"] = "Estellé Parquet <noreply@estelleparquet.com>"
                 msg["Reply-To"] = smtp_cfg["user"]
-                msg["To"]       = ", ".join(destinataris)
+                msg["To"] = ", ".join(destinataris)
 
-                # Logo per l'email: intenta base64, fallback a URL directa
-                logo_b64_email = logo_to_b64_email(logo_url) if logo_url else None
-                logo_src = logo_b64_email or logo_url
-                logo_html = (f'<img src="{logo_src}" width="180" style="display:block;'
-                             f'margin:0 auto 8px;max-height:70px;object-fit:contain">'
-                             if logo_src else "")
+                logo_bytes_email = fetch_logo_jpeg(logo_url)
+                logo_cid = "logo_client_estelle"
 
                 treballs_html = ""
                 for i, nom in enumerate(camps_actius):
@@ -449,12 +498,21 @@ if enviar:
                 adjunts_parts = []
                 if st.session_state.fotos_acumulades:
                     adjunts_parts.append(f"{len(st.session_state.fotos_acumulades)} foto(s)")
-                if firma_resp: adjunts_parts.append("firma responsable")
-                if firma_cli:  adjunts_parts.append("firma cliente")
-                adjunts_html = (f"""<tr><td colspan="2" style="padding-top:14px;font-size:12px;
+                if firma_resp:
+                    adjunts_parts.append("firma responsable")
+                if firma_cli:
+                    adjunts_parts.append("firma cliente")
+                adjunts_html = (
+                    f"""<tr><td colspan="2" style="padding-top:14px;font-size:12px;
                     color:#aaa;font-family:Montserrat,'Trebuchet MS',sans-serif">
                     📎 Adjuntos: {", ".join(adjunts_parts)}</td></tr>"""
-                    if adjunts_parts else "")
+                    if adjunts_parts else ""
+                )
+
+                logo_html = (
+                    f'<img src="cid:{logo_cid}" width="180" style="display:block;margin:0 auto 8px;max-height:70px;object-fit:contain">'
+                    if logo_bytes_email else ""
+                )
 
                 html = f"""<!DOCTYPE html>
 <html lang="es"><head><meta charset="UTF-8"></head>
@@ -499,7 +557,18 @@ if enviar:
 </table></td></tr></table>
 </body></html>"""
 
-                msg.attach(MIMEText(html, "html"))
+                body_related = MIMEMultipart("related")
+                body_alt = MIMEMultipart("alternative")
+                body_alt.attach(MIMEText(html, "html"))
+                body_related.attach(body_alt)
+
+                if logo_bytes_email:
+                    img_part = MIMEImage(logo_bytes_email, _subtype="jpeg")
+                    img_part.add_header("Content-ID", f"<{logo_cid}>")
+                    img_part.add_header("Content-Disposition", "inline", filename="logo_client.jpg")
+                    body_related.attach(img_part)
+
+                msg.attach(body_related)
 
                 for nom_f, contingut, mime_t in totes_fotos:
                     p1, p2 = (mime_t.split("/") + ["octet-stream"])[:2]
@@ -520,8 +589,10 @@ if enviar:
     if not errors:
         n_f = len(st.session_state.fotos_acumulades)
         fl = []
-        if firma_resp: fl.append("responsable")
-        if firma_cli:  fl.append("cliente")
+        if firma_resp:
+            fl.append("responsable")
+        if firma_cli:
+            fl.append("cliente")
         f_txt = " y ".join(fl) if fl else "sin firmas"
         st.markdown(f"""<div class="success-box">
             <div style="font-size:1.4rem;line-height:1">✔</div>
@@ -529,10 +600,10 @@ if enviar:
             <p>{obra_sel} · {tipus_sel}<br>
                {datetime.now().strftime('%d/%m/%Y · %H:%M')} · {n_f} foto(s) · {f_txt}</p>
             </div></div>""", unsafe_allow_html=True)
-        # Netejar estat
+
         st.session_state.fotos_acumulades = []
         st.session_state.firma_resp_bytes = None
-        st.session_state.firma_cli_bytes  = None
+        st.session_state.firma_cli_bytes = None
     else:
         for err in errors:
             st.error(err)

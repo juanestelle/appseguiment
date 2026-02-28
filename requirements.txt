@@ -1,4 +1,9 @@
-streamlit
 st-gsheets-connection
-pandas
 jinja2
+streamlit
+pandas
+plotly
+gspread
+oauth2client
+streamlit-gsheets
+Pillow

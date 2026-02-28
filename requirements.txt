@@ -2,3 +2,4 @@ streamlit
 pandas
 Pillow
 st-gsheets-connection
+streamlit-drawable-canvas

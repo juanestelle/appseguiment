@@ -9,6 +9,7 @@ from typing import Tuple, Optional
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 from PIL import Image, ImageOps
 from email import encoders
 from email.mime.base import MIMEBase
@@ -212,25 +213,21 @@ tipus_sel = col_b.selectbox("Trabajo realizado", df_templates["Tipus"].unique())
 dades_p = df_proj[df_proj["Nom"] == obra_sel].iloc[0]
 dades_t = df_templates[df_templates["Tipus"] == tipus_sel].iloc[0]
 
-# Logo del CLIENT — renderitzat pel NAVEGADOR (client-side), no pel servidor
-# Això evita qualsevol problema de descàrrega des de Streamlit Cloud
+# Logo del CLIENT — via components.html (iframe propi, sense restriccions CSP)
 logo_url = str(dades_p.get("Logo_client", "")).strip()
 if logo_url.startswith("http"):
-    st.markdown(f"""
-    <div style="display:flex;align-items:center;gap:14px;margin:10px 0 16px">
+    components.html(f"""
+    <div style="display:flex;align-items:center;gap:14px;padding:4px 0 10px">
         <img src="{logo_url}"
              style="height:40px;width:auto;max-width:150px;object-fit:contain"
-             onerror="this.style.display='none';document.getElementById('logo-fallback').style.display='block'">
-        <span id="logo-fallback" style="display:none;font-size:0.75rem;color:#aaa">
-            (logo no disponible)
+             onerror="this.style.display='none'">
+        <span style="font-size:15px;font-weight:600;color:#4e342e;font-family:Inter,sans-serif">
+            {obra_sel}
         </span>
-        <span style="font-size:0.9rem;font-weight:600;color:#4e342e">{obra_sel}</span>
-    </div>""", unsafe_allow_html=True)
+    </div>""", height=60)
 else:
-    st.markdown(f"""
-    <div style="margin:8px 0 16px;font-size:0.9rem;font-weight:600;color:#4e342e">
-        {obra_sel}
-    </div>""", unsafe_allow_html=True)
+    st.markdown(f"""<div style="margin:8px 0 16px;font-size:0.9rem;font-weight:600;color:#4e342e">
+        {obra_sel}</div>""", unsafe_allow_html=True)
 
 
 # ==========================================

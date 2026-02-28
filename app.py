@@ -19,10 +19,24 @@ from email.mime.text import MIMEText
 from streamlit_gsheets import GSheetsConnection
 from streamlit_drawable_canvas import st_canvas
 
+# Autorefresh opcional (si no està instal·lat, no trenca)
+try:
+    from streamlit_autorefresh import st_autorefresh
+except Exception:
+    st_autorefresh = None
+
 # ==========================================
 # CONFIGURACIÓ
 # ==========================================
+SHEETS_TTL_SECONDS = 60  # 60 segons
+
 st.set_page_config(page_title="Estellé Parquet · Seguimiento", page_icon="🪵", layout="centered")
+
+if st_autorefresh:
+    st_autorefresh(interval=SHEETS_TTL_SECONDS * 1000, key="auto_refresh")
+
+# Placeholder per posar el logo a dalt de tot
+logo_top = st.empty()
 
 st.markdown("""
 <style>
@@ -30,6 +44,9 @@ st.markdown("""
 :root { --wood:#4e342e; --accent:#8d6e63; --bg:#fdfaf7; --white:#fcfcfc; --border:#e0d7d0; }
 .stApp { background:var(--bg); color:#2c2c2c; font-family:'Inter',sans-serif; }
 #MainMenu,footer,header { visibility:hidden; }
+
+.block-container { max-width: 980px; padding-top: .6rem; }
+
 .stTabs [data-baseweb="tab-list"] { background:transparent !important; gap:4px; }
 .team-header { background:var(--white); border:1px solid #efebe9; padding:20px; border-radius:18px;
     text-align:center; margin-bottom:16px; box-shadow:0 2px 12px rgba(0,0,0,0.03); }
@@ -45,9 +62,23 @@ st.markdown("""
 .firma-box { border:1.5px dashed #d7ccc8; border-radius:12px; overflow:hidden; background:#fafafa; }
 .firma-ok { background:#e8f5e9; border:1px solid #a5d6a7; border-radius:8px;
     padding:6px 12px; font-size:0.78rem; color:#2e7d32; margin-top:6px; text-align:center; }
-.stFormSubmitButton > button { background:var(--wood) !important; color:white !important;
+
+.stSelectbox label, .stTextInput label, .stTextArea label, .stNumberInput label {
+  font-size: 0.9rem !important;
+}
+.stSelectbox div[data-baseweb="select"] > div,
+.stTextInput input,
+.stTextArea textarea,
+.stNumberInput input {
+  min-height: 52px !important;
+  font-size: 1.05rem !important;
+}
+
+.stFormSubmitButton > button {
+    background:var(--wood) !important; color:white !important;
     border-radius:12px !important; padding:0.85rem !important; font-weight:600 !important;
-    border:none !important; width:100% !important; font-size:0.9rem !important; }
+    border:none !important; width:100% !important; font-size:1rem !important; min-height:56px !important;
+}
 .stButton > button { background:transparent !important; color:var(--accent) !important;
     border:1px solid var(--border) !important; border-radius:8px !important; font-size:0.78rem !important;
     padding:0.4rem 0.9rem !important; width:auto !important; }
@@ -58,13 +89,18 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-
 # ==========================================
 # HELPERS
 # ==========================================
 def norm_pin(v) -> str:
     return str(v).strip().split(".")[0]
 
+def to_float_or_zero(x: str) -> float:
+    x = (x or "").strip().replace(",", ".")
+    try:
+        return float(x) if x else 0.0
+    except ValueError:
+        return 0.0
 
 def sanitize_image(name: str, content: bytes) -> Tuple[str, bytes, str]:
     img = Image.open(BytesIO(content))
@@ -74,7 +110,6 @@ def sanitize_image(name: str, content: bytes) -> Tuple[str, bytes, str]:
     img.save(out, format="JPEG", quality=85)
     base_name = name.rsplit(".", 1)[0]
     return f"{base_name}.jpg", out.getvalue(), "image/jpeg"
-
 
 def canvas_to_bytes(canvas_result) -> Optional[bytes]:
     if canvas_result is None or canvas_result.image_data is None:
@@ -86,7 +121,6 @@ def canvas_to_bytes(canvas_result) -> Optional[bytes]:
     out = BytesIO()
     img.save(out, format="JPEG", quality=90)
     return out.getvalue()
-
 
 def normalize_logo_url(url: str) -> str:
     if not url:
@@ -108,7 +142,6 @@ def normalize_logo_url(url: str) -> str:
 
     return u
 
-
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_logo_jpeg(url: str) -> Optional[bytes]:
     u = normalize_logo_url(url)
@@ -127,13 +160,11 @@ def fetch_logo_jpeg(url: str) -> Optional[bytes]:
     except Exception:
         return None
 
-
 def fmt_valor(v) -> str:
     if v is None:
         return "0"
     f = float(v)
     return str(int(f)) if f == int(f) else f"{f:.1f}"
-
 
 def img_to_thumb_b64(content: bytes) -> str:
     img = Image.open(BytesIO(content)).convert("RGB")
@@ -142,12 +173,10 @@ def img_to_thumb_b64(content: bytes) -> str:
     img.save(out, format="JPEG", quality=70)
     return base64.b64encode(out.getvalue()).decode()
 
-
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
     return df
-
 
 def pick_col(df: pd.DataFrame, options: list[str]) -> Optional[str]:
     cols_l = {c.lower(): c for c in df.columns}
@@ -156,15 +185,14 @@ def pick_col(df: pd.DataFrame, options: list[str]) -> Optional[str]:
             return cols_l[opt.lower()]
     return None
 
-
 # ==========================================
 # CONNEXIÓ SHEETS
 # ==========================================
 conn = st.connection("gsheets", type=GSheetsConnection)
 try:
-    df_projectes = normalize_columns(conn.read(worksheet="Projectes", ttl=0))
-    df_templates = normalize_columns(conn.read(worksheet="Config_Templates", ttl=0))
-    df_equips = normalize_columns(conn.read(worksheet="Equips", ttl=0))
+    df_projectes = normalize_columns(conn.read(worksheet="Projectes", ttl=SHEETS_TTL_SECONDS))
+    df_templates = normalize_columns(conn.read(worksheet="Config_Templates", ttl=SHEETS_TTL_SECONDS))
+    df_equips = normalize_columns(conn.read(worksheet="Equips", ttl=SHEETS_TTL_SECONDS))
 except Exception as e:
     st.error("Error de conexión con Google Sheets.")
     with st.expander("Detalle"):
@@ -195,7 +223,6 @@ df_projectes = df_projectes[df_projectes[col_nom] != ""]
 df_templates = df_templates[df_templates[col_tipus].notna()].copy()
 df_templates[col_tipus] = df_templates[col_tipus].astype(str).str.strip()
 df_templates = df_templates[df_templates[col_tipus] != ""]
-
 
 # ==========================================
 # LOGIN
@@ -228,7 +255,6 @@ for k, v in {
     if k not in st.session_state:
         st.session_state[k] = v
 
-
 # ==========================================
 # FILTRAR PROJECTES
 # ==========================================
@@ -244,7 +270,6 @@ if df_proj.empty:
     st.warning("No hay proyectos asignados a este equipo.")
     st.stop()
 
-
 # ==========================================
 # CAPÇALERA
 # ==========================================
@@ -259,9 +284,6 @@ with col_out:
         st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
-st.caption(f"Projectes visibles: {len(df_proj)}")
-
-
 # ==========================================
 # SELECCIÓ PROJECTE
 # ==========================================
@@ -275,21 +297,12 @@ dades_t = df_templates[df_templates[col_tipus] == tipus_sel].iloc[0]
 logo_url = normalize_logo_url(str(dades_p[col_logo]).strip()) if col_logo and pd.notna(dades_p[col_logo]) else ""
 logo_bytes = fetch_logo_jpeg(logo_url) if logo_url else None
 
-if logo_url.startswith("http"):
-    c1, c2 = st.columns([1, 3])
-    with c1:
-        st.image(logo_url, width=130)
-    with c2:
-        st.markdown(f"""<div style="margin-top:8px;font-size:1rem;font-weight:600;color:#4e342e">{obra_sel}</div>""", unsafe_allow_html=True)
-elif logo_bytes:
-    c1, c2 = st.columns([1, 3])
-    with c1:
-        st.image(logo_bytes, width=130)
-    with c2:
-        st.markdown(f"""<div style="margin-top:8px;font-size:1rem;font-weight:600;color:#4e342e">{obra_sel}</div>""", unsafe_allow_html=True)
-else:
-    st.markdown(f"""<div style="margin:8px 0 16px;font-size:0.9rem;font-weight:600;color:#4e342e">{obra_sel}</div>""", unsafe_allow_html=True)
-
+# Logo gran i a dalt de tot
+with logo_top.container():
+    if logo_url.startswith("http"):
+        st.image(logo_url, width=320)
+    elif logo_bytes:
+        st.image(logo_bytes, width=320)
 
 # ==========================================
 # FORMULARI
@@ -302,17 +315,20 @@ with st.form("main_form", clear_on_submit=False):
         if field_col and pd.notna(dades_t.get(field_col, "")) and str(dades_t.get(field_col, "")).strip():
             camps_actius.append(str(dades_t.get(field_col)))
 
-    valors = [0.0, 0.0, 0.0]
+    valors_txt = ["", "", ""]
     if camps_actius:
         m_cols = st.columns(len(camps_actius))
         for i, nom in enumerate(camps_actius):
             with m_cols[i]:
-                valors[i] = st.number_input(nom, min_value=0.0, value=0.0, step=0.5, format="%.1f")
-    v1, v2, v3 = valors[0], valors[1], valors[2]
+                valors_txt[i] = st.text_input(nom, value="", placeholder="Escriu quantitat")
 
     comentaris = st.text_area("Comentarios de la jornada", placeholder="Describe detalles relevantes del trabajo...", height=90)
     enviar = st.form_submit_button("▶  FINALIZAR Y ENVIAR INFORME")
 
+# Converteix només quan cal enviar
+v1 = to_float_or_zero(valors_txt[0])
+v2 = to_float_or_zero(valors_txt[1])
+v3 = to_float_or_zero(valors_txt[2])
 
 # ==========================================
 # FOTOS
@@ -360,7 +376,6 @@ if st.session_state.fotos_acumulades:
         st.rerun()
 st.markdown("</div>", unsafe_allow_html=True)
 
-
 # ==========================================
 # FIRMES
 # ==========================================
@@ -403,7 +418,6 @@ with col_f2:
         st.markdown('<div class="firma-ok">✔ Firma cliente lista</div>', unsafe_allow_html=True)
 st.markdown("</div>", unsafe_allow_html=True)
 
-
 # ==========================================
 # ENVIAMENT
 # ==========================================
@@ -422,7 +436,7 @@ if enviar:
 
         try:
             try:
-                df_seg = normalize_columns(conn.read(worksheet="Seguiment", ttl=0)).dropna(how="all")
+                df_seg = normalize_columns(conn.read(worksheet="Seguiment", ttl=SHEETS_TTL_SECONDS)).dropna(how="all")
             except Exception:
                 df_seg = pd.DataFrame(columns=["Fecha", "Hora", "Equipo", "Proyecto", "Trabajo", "Dato1", "Dato2", "Dato3", "Comentarios", "Fotos", "Firmas"])
 

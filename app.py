@@ -68,8 +68,7 @@ def norm_pin(v) -> str:
 
 def sanitize_image(name: str, content: bytes) -> Tuple[str, bytes, str]:
     img = Image.open(BytesIO(content))
-    img = ImageOps.exif_transpose(img)
-    img = img.convert("RGB")
+    img = ImageOps.exif_transpose(img).convert("RGB")
     img.thumbnail((1400, 1400))
     out = BytesIO()
     img.save(out, format="JPEG", quality=85)
@@ -92,7 +91,7 @@ def canvas_to_bytes(canvas_result) -> Optional[bytes]:
 def normalize_logo_url(url: str) -> str:
     if not url:
         return ""
-    u = url.strip()
+    u = url.strip().replace(" ", "%20")
 
     m = re.search(r"/file/d/([a-zA-Z0-9_-]+)", u)
     if m:
@@ -118,17 +117,12 @@ def fetch_logo_jpeg(url: str) -> Optional[bytes]:
 
     req = urllib.request.Request(
         u,
-        headers={
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "image/*,*/*;q=0.8",
-        },
+        headers={"User-Agent": "Mozilla/5.0", "Accept": "image/*,*/*;q=0.8"},
     )
     ctx = ssl.create_default_context()
-
     try:
         with urllib.request.urlopen(req, timeout=12, context=ctx) as r:
             data = r.read()
-
         img = Image.open(BytesIO(data))
         img = ImageOps.exif_transpose(img).convert("RGB")
         img.thumbnail((1200, 400))
@@ -173,8 +167,7 @@ except Exception as e:
 # LOGIN
 # ==========================================
 if "auth_user" not in st.session_state:
-    st.markdown("""<div class="team-header"><h1>Estellé Parquet</h1>
-    <p>Acceso Instaladores</p></div>""", unsafe_allow_html=True)
+    st.markdown("""<div class="team-header"><h1>Estellé Parquet</h1><p>Acceso Instaladores</p></div>""", unsafe_allow_html=True)
     with st.form("login"):
         pin_in = st.text_input("PIN de Equipo", type="password", placeholder="····")
         if st.form_submit_button("ENTRAR"):
@@ -192,13 +185,12 @@ if "auth_user" not in st.session_state:
 
 equip_actual = st.session_state.auth_user
 
-defaults = {
+for k, v in {
     "fotos_acumulades": [],
     "camara_activa": False,
     "firma_resp_bytes": None,
     "firma_cli_bytes": None,
-}
-for k, v in defaults.items():
+}.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
@@ -225,9 +217,7 @@ if df_proj.empty:
 # ==========================================
 col_hd, col_out = st.columns([5, 1])
 with col_hd:
-    st.markdown(f"""<div class="team-header">
-        <p>{datetime.now().strftime("%d · %m · %Y")}</p>
-        <h1>{equip_actual}</h1></div>""", unsafe_allow_html=True)
+    st.markdown(f"""<div class="team-header"><p>{datetime.now().strftime("%d · %m · %Y")}</p><h1>{equip_actual}</h1></div>""", unsafe_allow_html=True)
 with col_out:
     st.markdown("<div style='margin-top:22px'>", unsafe_allow_html=True)
     if st.button("Salir"):
@@ -247,25 +237,24 @@ tipus_sel = col_b.selectbox("Trabajo realizado", df_templates["Tipus"].unique())
 dades_p = df_proj[df_proj["Nom"] == obra_sel].iloc[0]
 dades_t = df_templates[df_templates["Tipus"] == tipus_sel].iloc[0]
 
-logo_url = str(dades_p.get("Logo_client", "")).strip()
+logo_url = normalize_logo_url(str(dades_p.get("Logo_client", "")).strip())
 logo_bytes = fetch_logo_jpeg(logo_url)
 
-if logo_bytes:
+# APP: prioritat URL directa (CDN-friendly), fallback bytes
+if logo_url.startswith("http"):
+    c1, c2 = st.columns([1, 3])
+    with c1:
+        st.image(logo_url, width=130)
+    with c2:
+        st.markdown(f"""<div style="margin-top:8px;font-size:1rem;font-weight:600;color:#4e342e">{obra_sel}</div>""", unsafe_allow_html=True)
+elif logo_bytes:
     c1, c2 = st.columns([1, 3])
     with c1:
         st.image(logo_bytes, width=130)
     with c2:
-        st.markdown(
-            f"""<div style="margin-top:8px;font-size:1rem;font-weight:600;color:#4e342e">
-            {obra_sel}</div>""",
-            unsafe_allow_html=True,
-        )
+        st.markdown(f"""<div style="margin-top:8px;font-size:1rem;font-weight:600;color:#4e342e">{obra_sel}</div>""", unsafe_allow_html=True)
 else:
-    st.markdown(
-        f"""<div style="margin:8px 0 16px;font-size:0.9rem;font-weight:600;color:#4e342e">
-        {obra_sel}</div>""",
-        unsafe_allow_html=True,
-    )
+    st.markdown(f"""<div style="margin:8px 0 16px;font-size:0.9rem;font-weight:600;color:#4e342e">{obra_sel}</div>""", unsafe_allow_html=True)
 
 
 # ==========================================
@@ -288,12 +277,7 @@ with st.form("main_form", clear_on_submit=False):
                 valors[i] = st.number_input(nom, min_value=0.0, value=0.0, step=0.5, format="%.1f")
     v1, v2, v3 = valors[0], valors[1], valors[2]
 
-    st.markdown("<div style='margin:12px 0'></div>", unsafe_allow_html=True)
-    comentaris = st.text_area(
-        "Comentarios de la jornada",
-        placeholder="Describe detalles relevantes del trabajo...",
-        height=90,
-    )
+    comentaris = st.text_area("Comentarios de la jornada", placeholder="Describe detalles relevantes del trabajo...", height=90)
     enviar = st.form_submit_button("▶  FINALIZAR Y ENVIAR INFORME")
 
 
@@ -314,27 +298,18 @@ with tab_cam:
         foto_cam = st.camera_input("Capturar foto", label_visibility="collapsed")
         col_add, col_clr = st.columns([2, 1])
         with col_add:
-            if st.button("＋ Añadir esta foto", disabled=(foto_cam is None)):
-                if foto_cam is not None:
-                    n, b, m = sanitize_image(
-                        f"foto_{len(st.session_state.fotos_acumulades)+1:02d}",
-                        foto_cam.getvalue(),
-                    )
-                    st.session_state.fotos_acumulades.append((n, b, m))
-                    st.session_state.camara_activa = False
-                    st.rerun()
+            if st.button("＋ Añadir esta foto", disabled=(foto_cam is None)) and foto_cam is not None:
+                n, b, m = sanitize_image(f"foto_{len(st.session_state.fotos_acumulades)+1:02d}", foto_cam.getvalue())
+                st.session_state.fotos_acumulades.append((n, b, m))
+                st.session_state.camara_activa = False
+                st.rerun()
         with col_clr:
             if st.button("✕ Cerrar"):
                 st.session_state.camara_activa = False
                 st.rerun()
 
 with tab_gal:
-    fotos_gal = st.file_uploader(
-        "Seleccionar imágenes",
-        type=["jpg", "jpeg", "png", "webp"],
-        accept_multiple_files=True,
-        label_visibility="collapsed",
-    )
+    fotos_gal = st.file_uploader("Seleccionar imágenes", type=["jpg", "jpeg", "png", "webp"], accept_multiple_files=True, label_visibility="collapsed")
     if fotos_gal and st.button("＋ Añadir selección"):
         for f in fotos_gal:
             n, b, m = sanitize_image(f.name, f.getvalue())
@@ -344,14 +319,12 @@ with tab_gal:
 if st.session_state.fotos_acumulades:
     thumbs_html = '<div class="foto-thumb-row">'
     for nom_f, cont_f, _ in st.session_state.fotos_acumulades:
-        b64t = img_to_thumb_b64(cont_f)
-        thumbs_html += f'<img src="data:image/jpeg;base64,{b64t}" title="{nom_f}">'
+        thumbs_html += f'<img src="data:image/jpeg;base64,{img_to_thumb_b64(cont_f)}" title="{nom_f}">'
     thumbs_html += f'</div><div class="foto-count">✔ {len(st.session_state.fotos_acumulades)} foto(s) listas</div>'
     st.markdown(thumbs_html, unsafe_allow_html=True)
     if st.button("🗑 Borrar todas las fotos"):
         st.session_state.fotos_acumulades = []
         st.rerun()
-
 st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -365,17 +338,9 @@ col_f1, col_f2 = st.columns(2)
 with col_f1:
     st.caption("Responsable de obra")
     st.markdown('<div class="firma-box">', unsafe_allow_html=True)
-    canvas_resp = st_canvas(
-        fill_color="rgba(255,255,255,0)",
-        stroke_width=2,
-        stroke_color="#1a1a1a",
-        background_color="#fafafa",
-        height=140,
-        key="canvas_resp",
-        update_streamlit=True,
-        drawing_mode="freedraw",
-        display_toolbar=False,
-    )
+    canvas_resp = st_canvas(fill_color="rgba(255,255,255,0)", stroke_width=2, stroke_color="#1a1a1a",
+                            background_color="#fafafa", height=140, key="canvas_resp",
+                            update_streamlit=True, drawing_mode="freedraw", display_toolbar=False)
     st.markdown("</div>", unsafe_allow_html=True)
     if st.button("💾 Guardar firma responsable"):
         b = canvas_to_bytes(canvas_resp)
@@ -390,17 +355,9 @@ with col_f1:
 with col_f2:
     st.caption("Cliente / Propietario")
     st.markdown('<div class="firma-box">', unsafe_allow_html=True)
-    canvas_cli = st_canvas(
-        fill_color="rgba(255,255,255,0)",
-        stroke_width=2,
-        stroke_color="#1a1a1a",
-        background_color="#fafafa",
-        height=140,
-        key="canvas_cli",
-        update_streamlit=True,
-        drawing_mode="freedraw",
-        display_toolbar=False,
-    )
+    canvas_cli = st_canvas(fill_color="rgba(255,255,255,0)", stroke_width=2, stroke_color="#1a1a1a",
+                           background_color="#fafafa", height=140, key="canvas_cli",
+                           update_streamlit=True, drawing_mode="freedraw", display_toolbar=False)
     st.markdown("</div>", unsafe_allow_html=True)
     if st.button("💾 Guardar firma cliente"):
         b = canvas_to_bytes(canvas_cli)
@@ -411,7 +368,6 @@ with col_f2:
             st.warning("El canvas está en blanco")
     if st.session_state.firma_cli_bytes:
         st.markdown('<div class="firma-ok">✔ Firma cliente lista</div>', unsafe_allow_html=True)
-
 st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -431,17 +387,11 @@ if enviar:
     with st.spinner("Enviando informe..."):
         errors = []
 
-        # A. Sheets
         try:
             try:
                 df_seg = conn.read(worksheet="Seguiment", ttl=0).dropna(how="all")
             except Exception:
-                df_seg = pd.DataFrame(
-                    columns=[
-                        "Fecha", "Hora", "Equipo", "Proyecto", "Trabajo",
-                        "Dato1", "Dato2", "Dato3", "Comentarios", "Fotos", "Firmas"
-                    ]
-                )
+                df_seg = pd.DataFrame(columns=["Fecha", "Hora", "Equipo", "Proyecto", "Trabajo", "Dato1", "Dato2", "Dato3", "Comentarios", "Fotos", "Firmas"])
 
             nova = pd.DataFrame([{
                 "Fecha": datetime.now().strftime("%d/%m/%Y"),
@@ -452,19 +402,15 @@ if enviar:
                 "Dato1": v1, "Dato2": v2, "Dato3": v3,
                 "Comentarios": comentaris,
                 "Fotos": len(st.session_state.fotos_acumulades),
-                "Firmas": ("Resp" if firma_resp else "") + (" · Cliente" if firma_cli else ""),
+                "Firmas": ("Resp" if firma_resp else "") + (" · Cliente" if firma_cli else "")
             }])
-
             conn.update(worksheet="Seguiment", data=pd.concat([df_seg, nova], ignore_index=True))
         except Exception as e:
             errors.append(f"Sheets: {e}")
 
-        # B. Email
         try:
             smtp_cfg = st.secrets["smtp"]
-            emails_raw = str(dades_p.get("Emails_Contacte", ""))
-            destinataris = [e.strip() for e in emails_raw.split(",") if e.strip()]
-
+            destinataris = [e.strip() for e in str(dades_p.get("Emails_Contacte", "")).split(",") if e.strip()]
             if destinataris:
                 msg = MIMEMultipart("mixed")
                 msg["Subject"] = f"Seguimiento del proyecto {obra_sel} - Estellé parquet"
@@ -480,79 +426,50 @@ if enviar:
                     vf = fmt_valor([v1, v2, v3][i])
                     treballs_html += f"""
                     <tr>
-                      <td align="right" style="padding:5px 10px 5px 0;font-size:22px;font-weight:700;
-                          color:#555;font-family:Montserrat,'Trebuchet MS',sans-serif;white-space:nowrap">{vf}</td>
-                      <td align="left" style="padding:5px 0;font-size:17px;color:#888;
-                          font-family:Montserrat,'Trebuchet MS',sans-serif">{nom}</td>
+                      <td align="right" style="padding:5px 10px 5px 0;font-size:22px;font-weight:700;color:#555;font-family:Montserrat,'Trebuchet MS',sans-serif;white-space:nowrap">{vf}</td>
+                      <td align="left" style="padding:5px 0;font-size:17px;color:#888;font-family:Montserrat,'Trebuchet MS',sans-serif">{nom}</td>
                     </tr>"""
 
                 obs_html = f"""
                 <tr><td colspan="2" style="padding-top:18px">
-                  <p style="margin:0 0 4px;color:#421cad;font-size:13px;font-weight:700;
-                     font-family:Montserrat,'Trebuchet MS',sans-serif;text-transform:uppercase;
-                     letter-spacing:1px">Comentarios de la jornada</p>
-                  <p style="margin:0;color:#6b5ea8;font-size:15px;line-height:1.6;
-                     font-family:Montserrat,'Trebuchet MS',sans-serif">{comentaris}</p>
+                  <p style="margin:0 0 4px;color:#421cad;font-size:13px;font-weight:700;font-family:Montserrat,'Trebuchet MS',sans-serif;text-transform:uppercase;letter-spacing:1px">Comentarios de la jornada</p>
+                  <p style="margin:0;color:#6b5ea8;font-size:15px;line-height:1.6;font-family:Montserrat,'Trebuchet MS',sans-serif">{comentaris}</p>
                 </td></tr>""" if comentaris.strip() else ""
 
-                adjunts_parts = []
+                adj_parts = []
                 if st.session_state.fotos_acumulades:
-                    adjunts_parts.append(f"{len(st.session_state.fotos_acumulades)} foto(s)")
+                    adj_parts.append(f"{len(st.session_state.fotos_acumulades)} foto(s)")
                 if firma_resp:
-                    adjunts_parts.append("firma responsable")
+                    adj_parts.append("firma responsable")
                 if firma_cli:
-                    adjunts_parts.append("firma cliente")
-                adjunts_html = (
-                    f"""<tr><td colspan="2" style="padding-top:14px;font-size:12px;
-                    color:#aaa;font-family:Montserrat,'Trebuchet MS',sans-serif">
-                    📎 Adjuntos: {", ".join(adjunts_parts)}</td></tr>"""
-                    if adjunts_parts else ""
-                )
+                    adj_parts.append("firma cliente")
+                adjunts_html = f"""<tr><td colspan="2" style="padding-top:14px;font-size:12px;color:#aaa;font-family:Montserrat,'Trebuchet MS',sans-serif">📎 Adjuntos: {", ".join(adj_parts)}</td></tr>""" if adj_parts else ""
 
-                logo_html = (
-                    f'<img src="cid:{logo_cid}" width="180" style="display:block;margin:0 auto 8px;max-height:70px;object-fit:contain">'
-                    if logo_bytes_email else ""
-                )
+                if logo_bytes_email:
+                    logo_html = f'<img src="cid:{logo_cid}" width="180" style="display:block;margin:0 auto 8px;max-height:70px;object-fit:contain">'
+                else:
+                    logo_html = f'<img src="{logo_url}" width="180" style="display:block;margin:0 auto 8px;max-height:70px;object-fit:contain">' if logo_url.startswith("http") else ""
 
                 html = f"""<!DOCTYPE html>
 <html lang="es"><head><meta charset="UTF-8"></head>
 <body style="margin:0;padding:0;background:#fefdf1">
-<table width="100%" cellpadding="0" cellspacing="0" bgcolor="#fefdf1">
-<tr><td align="center" style="padding:30px 10px">
-<table width="580" cellpadding="0" cellspacing="0"
-  style="background:#fff9e5;border-radius:14px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.06)">
+<table width="100%" cellpadding="0" cellspacing="0" bgcolor="#fefdf1"><tr><td align="center" style="padding:30px 10px">
+<table width="580" cellpadding="0" cellspacing="0" style="background:#fff9e5;border-radius:14px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.06)">
   <tr><td align="center" style="padding:32px 30px 16px">{logo_html}</td></tr>
-  <tr><td align="center" style="padding:0 30px 8px">
-    <p style="margin:0;color:#7747ff;font-size:17px;font-family:Montserrat,'Trebuchet MS',sans-serif">
-      {datetime.now().strftime("%d · %m · %Y")}</p></td></tr>
+  <tr><td align="center" style="padding:0 30px 8px"><p style="margin:0;color:#7747ff;font-size:17px;font-family:Montserrat,'Trebuchet MS',sans-serif">{datetime.now().strftime("%d · %m · %Y")}</p></td></tr>
   <tr><td style="padding:0 30px"><hr style="border:none;border-top:1px solid #e8e0d0;margin:0"></td></tr>
-  <tr><td align="center" style="padding:22px 30px 8px">
-    <p style="margin:0 0 4px;font-size:11px;color:#777;text-transform:uppercase;letter-spacing:2px;
-       font-family:Montserrat,'Trebuchet MS',sans-serif">Proyecto</p>
-    <p style="margin:0 0 4px;font-size:20px;font-weight:700;color:#1a1a1a;
-       font-family:Montserrat,'Trebuchet MS',sans-serif">{obra_sel}</p>
-    <p style="margin:0;font-size:13px;color:#888;font-style:italic;
-       font-family:Montserrat,'Trebuchet MS',sans-serif">By ESTELLÉ parquet</p></td></tr>
+  <tr><td align="center" style="padding:22px 30px 8px"><p style="margin:0 0 4px;font-size:11px;color:#777;text-transform:uppercase;letter-spacing:2px;font-family:Montserrat,'Trebuchet MS',sans-serif">Proyecto</p>
+    <p style="margin:0 0 4px;font-size:20px;font-weight:700;color:#1a1a1a;font-family:Montserrat,'Trebuchet MS',sans-serif">{obra_sel}</p>
+    <p style="margin:0;font-size:13px;color:#888;font-style:italic;font-family:Montserrat,'Trebuchet MS',sans-serif">By ESTELLÉ parquet</p></td></tr>
   <tr><td style="padding:14px 30px 0"><hr style="border:none;border-top:1px solid #e8e0d0;margin:0"></td></tr>
-  <tr><td align="center" style="padding:20px 30px 6px">
-    <p style="margin:0;font-size:13px;font-weight:700;color:#7747ff;text-transform:uppercase;
-       letter-spacing:3px;font-family:Montserrat,'Trebuchet MS',sans-serif">Trabajos</p></td></tr>
-  <tr><td align="center" style="padding:4px 30px 20px">
-    <table cellpadding="0" cellspacing="0" align="center">
-      {treballs_html}{obs_html}{adjunts_html}
-    </table></td></tr>
+  <tr><td align="center" style="padding:20px 30px 6px"><p style="margin:0;font-size:13px;font-weight:700;color:#7747ff;text-transform:uppercase;letter-spacing:3px;font-family:Montserrat,'Trebuchet MS',sans-serif">Trabajos</p></td></tr>
+  <tr><td align="center" style="padding:4px 30px 20px"><table cellpadding="0" cellspacing="0" align="center">{treballs_html}{obs_html}{adjunts_html}</table></td></tr>
   <tr><td style="padding:0 30px"><hr style="border:none;border-top:1px solid #e8e0d0;margin:0"></td></tr>
-  <tr><td align="center" style="padding:20px 30px">
-    <p style="margin:0 0 3px;font-size:12px;color:#aaa;font-family:Montserrat,'Trebuchet MS',sans-serif">
-      Equipo responsable</p>
-    <p style="margin:0;font-size:20px;font-weight:700;color:#8125bb;
-       font-family:Montserrat,'Trebuchet MS',sans-serif">{equip_actual}</p></td></tr>
+  <tr><td align="center" style="padding:20px 30px"><p style="margin:0 0 3px;font-size:12px;color:#aaa;font-family:Montserrat,'Trebuchet MS',sans-serif">Equipo responsable</p>
+    <p style="margin:0;font-size:20px;font-weight:700;color:#8125bb;font-family:Montserrat,'Trebuchet MS',sans-serif">{equip_actual}</p></td></tr>
   <tr><td align="center" style="padding:16px 30px 24px;border-top:1px solid #e8e0d0">
-    <a href="http://www.estelleparquet.com" style="color:#4e342e;font-size:13px;text-decoration:none;
-       font-family:Montserrat,'Trebuchet MS',sans-serif">www.estelleparquet.com</a>
-    <p style="margin:10px 0 0;font-size:11px;color:#bbb;line-height:1.6;
-       font-family:Montserrat,'Trebuchet MS',sans-serif">
-      Realizamos el seguimiento diario para una óptima comunicación<br>y mejora de nuestros servicios.</p>
+    <a href="http://www.estelleparquet.com" style="color:#4e342e;font-size:13px;text-decoration:none;font-family:Montserrat,'Trebuchet MS',sans-serif">www.estelleparquet.com</a>
+    <p style="margin:10px 0 0;font-size:11px;color:#bbb;line-height:1.6;font-family:Montserrat,'Trebuchet MS',sans-serif">Realizamos el seguimiento diario para una óptima comunicación<br>y mejora de nuestros servicios.</p>
   </td></tr>
 </table></td></tr></table>
 </body></html>"""
@@ -582,7 +499,6 @@ if enviar:
                     s.starttls()
                     s.login(smtp_cfg["user"], smtp_cfg["password"])
                     s.sendmail(smtp_cfg["user"], destinataris, msg.as_string())
-
         except Exception as e:
             errors.append(f"Email: {e}")
 
@@ -594,13 +510,7 @@ if enviar:
         if firma_cli:
             fl.append("cliente")
         f_txt = " y ".join(fl) if fl else "sin firmas"
-        st.markdown(f"""<div class="success-box">
-            <div style="font-size:1.4rem;line-height:1">✔</div>
-            <div><h4>Informe enviado correctamente</h4>
-            <p>{obra_sel} · {tipus_sel}<br>
-               {datetime.now().strftime('%d/%m/%Y · %H:%M')} · {n_f} foto(s) · {f_txt}</p>
-            </div></div>""", unsafe_allow_html=True)
-
+        st.markdown(f"""<div class="success-box"><div style="font-size:1.4rem;line-height:1">✔</div><div><h4>Informe enviado correctamente</h4><p>{obra_sel} · {tipus_sel}<br>{datetime.now().strftime('%d/%m/%Y · %H:%M')} · {n_f} foto(s) · {f_txt}</p></div></div>""", unsafe_allow_html=True)
         st.session_state.fotos_acumulades = []
         st.session_state.firma_resp_bytes = None
         st.session_state.firma_cli_bytes = None

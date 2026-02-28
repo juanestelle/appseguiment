@@ -1,3 +1,4 @@
+```python
 import smtplib
 import urllib.request
 import ssl
@@ -60,7 +61,7 @@ st.markdown("""
 
 
 # ==========================================
-# FUNCIONS
+# HELPERS
 # ==========================================
 def norm_pin(v) -> str:
     return str(v).strip().split(".")[0]
@@ -114,14 +115,9 @@ def fetch_logo_jpeg(url: str) -> Optional[bytes]:
     u = normalize_logo_url(url)
     if not u.startswith("http"):
         return None
-
-    req = urllib.request.Request(
-        u,
-        headers={"User-Agent": "Mozilla/5.0", "Accept": "image/*,*/*;q=0.8"},
-    )
-    ctx = ssl.create_default_context()
+    req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0", "Accept": "image/*,*/*;q=0.8"})
     try:
-        with urllib.request.urlopen(req, timeout=12, context=ctx) as r:
+        with urllib.request.urlopen(req, timeout=12, context=ssl.create_default_context()) as r:
             data = r.read()
         img = Image.open(BytesIO(data))
         img = ImageOps.exif_transpose(img).convert("RGB")
@@ -148,19 +144,58 @@ def img_to_thumb_b64(content: bytes) -> str:
     return base64.b64encode(out.getvalue()).decode()
 
 
+def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
+
+
+def pick_col(df: pd.DataFrame, options: list[str]) -> Optional[str]:
+    cols_l = {c.lower(): c for c in df.columns}
+    for opt in options:
+        if opt.lower() in cols_l:
+            return cols_l[opt.lower()]
+    return None
+
+
 # ==========================================
 # CONNEXIÓ SHEETS
 # ==========================================
 conn = st.connection("gsheets", type=GSheetsConnection)
 try:
-    df_projectes = conn.read(worksheet="Projectes", ttl=300).dropna(subset=["Nom"])
-    df_templates = conn.read(worksheet="Config_Templates", ttl=300).dropna(subset=["Tipus"])
-    df_equips = conn.read(worksheet="Equips", ttl=300).dropna(subset=["Equip"])
+    df_projectes = normalize_columns(conn.read(worksheet="Projectes", ttl=0))
+    df_templates = normalize_columns(conn.read(worksheet="Config_Templates", ttl=0))
+    df_equips = normalize_columns(conn.read(worksheet="Equips", ttl=0))
 except Exception as e:
     st.error("Error de conexión con Google Sheets.")
     with st.expander("Detalle"):
         st.code(str(e))
     st.stop()
+
+col_nom = pick_col(df_projectes, ["Nom", "Nombre", "Projecte", "Proyecto"])
+col_logo = pick_col(df_projectes, ["Logo_Client", "Logo_client", "Logo", "LogoClient"])
+col_emails = pick_col(df_projectes, ["Emails_Contacte", "Emails_contacte", "Emails", "Email"])
+col_equip_proj = pick_col(df_projectes, ["Equip", "Equipo"])
+
+col_tipus = pick_col(df_templates, ["Tipus", "Tipo"])
+col_camp1 = pick_col(df_templates, ["Camp1"])
+col_camp2 = pick_col(df_templates, ["Camp2"])
+col_camp3 = pick_col(df_templates, ["Camp3"])
+
+col_equip_equips = pick_col(df_equips, ["Equip", "Equipo"])
+col_pin = pick_col(df_equips, ["PIN", "Pin", "pin"])
+
+if not all([col_nom, col_tipus, col_equip_equips, col_pin]):
+    st.error("Falten columnes obligatòries a Sheets (Nom/Tipus/Equip/PIN).")
+    st.stop()
+
+df_projectes = df_projectes[df_projectes[col_nom].notna()].copy()
+df_projectes[col_nom] = df_projectes[col_nom].astype(str).str.strip()
+df_projectes = df_projectes[df_projectes[col_nom] != ""]
+
+df_templates = df_templates[df_templates[col_tipus].notna()].copy()
+df_templates[col_tipus] = df_templates[col_tipus].astype(str).str.strip()
+df_templates = df_templates[df_templates[col_tipus] != ""]
 
 
 # ==========================================
@@ -171,9 +206,9 @@ if "auth_user" not in st.session_state:
     with st.form("login"):
         pin_in = st.text_input("PIN de Equipo", type="password", placeholder="····")
         if st.form_submit_button("ENTRAR"):
-            match = df_equips[df_equips["PIN"].apply(norm_pin) == norm_pin(pin_in)]
+            match = df_equips[df_equips[col_pin].apply(norm_pin) == norm_pin(pin_in)]
             if not match.empty:
-                st.session_state.auth_user = match.iloc[0]["Equip"]
+                st.session_state.auth_user = str(match.iloc[0][col_equip_equips]).strip()
                 st.session_state.fotos_acumulades = []
                 st.session_state.camara_activa = False
                 st.session_state.firma_resp_bytes = None
@@ -183,7 +218,7 @@ if "auth_user" not in st.session_state:
                 st.error("PIN incorrecto. Consulta a tu responsable.")
     st.stop()
 
-equip_actual = st.session_state.auth_user
+equip_actual = str(st.session_state.auth_user).strip()
 
 for k, v in {
     "fotos_acumulades": [],
@@ -198,14 +233,13 @@ for k, v in {
 # ==========================================
 # FILTRAR PROJECTES
 # ==========================================
-if "Equip" in df_projectes.columns:
-    df_proj = df_projectes[
-        df_projectes["Equip"].isna()
-        | (df_projectes["Equip"].astype(str).str.strip() == "")
-        | (df_projectes["Equip"].astype(str).str.strip() == equip_actual)
-    ]
+if col_equip_proj:
+    equip_col_norm = df_projectes[col_equip_proj].fillna("").astype(str).str.strip().str.lower()
+    df_proj = df_projectes[(equip_col_norm == "") | (equip_col_norm == equip_actual.lower())].copy()
 else:
-    df_proj = df_projectes
+    df_proj = df_projectes.copy()
+
+df_proj = df_proj.drop_duplicates(subset=[col_nom])
 
 if df_proj.empty:
     st.warning("No hay proyectos asignados a este equipo.")
@@ -226,21 +260,22 @@ with col_out:
         st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
+st.caption(f"Projectes visibles: {len(df_proj)}")
+
 
 # ==========================================
 # SELECCIÓ PROJECTE
 # ==========================================
 col_a, col_b = st.columns(2)
-obra_sel = col_a.selectbox("Proyecto", df_proj["Nom"].unique())
-tipus_sel = col_b.selectbox("Trabajo realizado", df_templates["Tipus"].unique())
+obra_sel = col_a.selectbox("Proyecto", sorted(df_proj[col_nom].tolist()))
+tipus_sel = col_b.selectbox("Trabajo realizado", sorted(df_templates[col_tipus].tolist()))
 
-dades_p = df_proj[df_proj["Nom"] == obra_sel].iloc[0]
-dades_t = df_templates[df_templates["Tipus"] == tipus_sel].iloc[0]
+dades_p = df_proj[df_proj[col_nom] == obra_sel].iloc[0]
+dades_t = df_templates[df_templates[col_tipus] == tipus_sel].iloc[0]
 
-logo_url = normalize_logo_url(str(dades_p.get("Logo_client", "")).strip())
-logo_bytes = fetch_logo_jpeg(logo_url)
+logo_url = normalize_logo_url(str(dades_p[col_logo]).strip()) if col_logo and pd.notna(dades_p[col_logo]) else ""
+logo_bytes = fetch_logo_jpeg(logo_url) if logo_url else None
 
-# APP: prioritat URL directa (CDN-friendly), fallback bytes
 if logo_url.startswith("http"):
     c1, c2 = st.columns([1, 3])
     with c1:
@@ -264,10 +299,9 @@ with st.form("main_form", clear_on_submit=False):
     st.markdown('<span class="label-up">Medidas y avance</span>', unsafe_allow_html=True)
 
     camps_actius = []
-    for field in ["Camp1", "Camp2", "Camp3"]:
-        val = dades_t.get(field, "")
-        if pd.notna(val) and str(val).strip():
-            camps_actius.append(str(val))
+    for field_col in [col_camp1, col_camp2, col_camp3]:
+        if field_col and pd.notna(dades_t.get(field_col, "")) and str(dades_t.get(field_col, "")).strip():
+            camps_actius.append(str(dades_t.get(field_col)))
 
     valors = [0.0, 0.0, 0.0]
     if camps_actius:
@@ -389,7 +423,7 @@ if enviar:
 
         try:
             try:
-                df_seg = conn.read(worksheet="Seguiment", ttl=0).dropna(how="all")
+                df_seg = normalize_columns(conn.read(worksheet="Seguiment", ttl=0)).dropna(how="all")
             except Exception:
                 df_seg = pd.DataFrame(columns=["Fecha", "Hora", "Equipo", "Proyecto", "Trabajo", "Dato1", "Dato2", "Dato3", "Comentarios", "Fotos", "Firmas"])
 
@@ -410,7 +444,8 @@ if enviar:
 
         try:
             smtp_cfg = st.secrets["smtp"]
-            destinataris = [e.strip() for e in str(dades_p.get("Emails_Contacte", "")).split(",") if e.strip()]
+            emails_raw = str(dades_p[col_emails]) if col_emails and pd.notna(dades_p[col_emails]) else ""
+            destinataris = [e.strip() for e in emails_raw.split(",") if e.strip()]
             if destinataris:
                 msg = MIMEMultipart("mixed")
                 msg["Subject"] = f"Seguimiento del proyecto {obra_sel} - Estellé parquet"
@@ -418,7 +453,7 @@ if enviar:
                 msg["Reply-To"] = smtp_cfg["user"]
                 msg["To"] = ", ".join(destinataris)
 
-                logo_bytes_email = fetch_logo_jpeg(logo_url)
+                logo_bytes_email = fetch_logo_jpeg(logo_url) if logo_url else None
                 logo_cid = "logo_client_estelle"
 
                 treballs_html = ""
@@ -426,14 +461,14 @@ if enviar:
                     vf = fmt_valor([v1, v2, v3][i])
                     treballs_html += f"""
                     <tr>
-                      <td align="right" style="padding:5px 10px 5px 0;font-size:22px;font-weight:700;color:#555;font-family:Montserrat,'Trebuchet MS',sans-serif;white-space:nowrap">{vf}</td>
-                      <td align="left" style="padding:5px 0;font-size:17px;color:#888;font-family:Montserrat,'Trebuchet MS',sans-serif">{nom}</td>
+                      <td align="right" style="padding:5px 10px 5px 0;font-size:22px;font-weight:700;color:#555;white-space:nowrap">{vf}</td>
+                      <td align="left" style="padding:5px 0;font-size:17px;color:#888">{nom}</td>
                     </tr>"""
 
                 obs_html = f"""
                 <tr><td colspan="2" style="padding-top:18px">
-                  <p style="margin:0 0 4px;color:#421cad;font-size:13px;font-weight:700;font-family:Montserrat,'Trebuchet MS',sans-serif;text-transform:uppercase;letter-spacing:1px">Comentarios de la jornada</p>
-                  <p style="margin:0;color:#6b5ea8;font-size:15px;line-height:1.6;font-family:Montserrat,'Trebuchet MS',sans-serif">{comentaris}</p>
+                  <p style="margin:0 0 4px;color:#421cad;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px">Comentarios de la jornada</p>
+                  <p style="margin:0;color:#6b5ea8;font-size:15px;line-height:1.6">{comentaris}</p>
                 </td></tr>""" if comentaris.strip() else ""
 
                 adj_parts = []
@@ -443,7 +478,7 @@ if enviar:
                     adj_parts.append("firma responsable")
                 if firma_cli:
                     adj_parts.append("firma cliente")
-                adjunts_html = f"""<tr><td colspan="2" style="padding-top:14px;font-size:12px;color:#aaa;font-family:Montserrat,'Trebuchet MS',sans-serif">📎 Adjuntos: {", ".join(adj_parts)}</td></tr>""" if adj_parts else ""
+                adjunts_html = f"""<tr><td colspan="2" style="padding-top:14px;font-size:12px;color:#aaa">📎 Adjuntos: {", ".join(adj_parts)}</td></tr>""" if adj_parts else ""
 
                 if logo_bytes_email:
                     logo_html = f'<img src="cid:{logo_cid}" width="180" style="display:block;margin:0 auto 8px;max-height:70px;object-fit:contain">'
@@ -456,21 +491,17 @@ if enviar:
 <table width="100%" cellpadding="0" cellspacing="0" bgcolor="#fefdf1"><tr><td align="center" style="padding:30px 10px">
 <table width="580" cellpadding="0" cellspacing="0" style="background:#fff9e5;border-radius:14px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.06)">
   <tr><td align="center" style="padding:32px 30px 16px">{logo_html}</td></tr>
-  <tr><td align="center" style="padding:0 30px 8px"><p style="margin:0;color:#7747ff;font-size:17px;font-family:Montserrat,'Trebuchet MS',sans-serif">{datetime.now().strftime("%d · %m · %Y")}</p></td></tr>
+  <tr><td align="center" style="padding:0 30px 8px"><p style="margin:0;color:#7747ff;font-size:17px">{datetime.now().strftime("%d · %m · %Y")}</p></td></tr>
   <tr><td style="padding:0 30px"><hr style="border:none;border-top:1px solid #e8e0d0;margin:0"></td></tr>
-  <tr><td align="center" style="padding:22px 30px 8px"><p style="margin:0 0 4px;font-size:11px;color:#777;text-transform:uppercase;letter-spacing:2px;font-family:Montserrat,'Trebuchet MS',sans-serif">Proyecto</p>
-    <p style="margin:0 0 4px;font-size:20px;font-weight:700;color:#1a1a1a;font-family:Montserrat,'Trebuchet MS',sans-serif">{obra_sel}</p>
-    <p style="margin:0;font-size:13px;color:#888;font-style:italic;font-family:Montserrat,'Trebuchet MS',sans-serif">By ESTELLÉ parquet</p></td></tr>
+  <tr><td align="center" style="padding:22px 30px 8px"><p style="margin:0 0 4px;font-size:11px;color:#777;text-transform:uppercase;letter-spacing:2px">Proyecto</p>
+    <p style="margin:0 0 4px;font-size:20px;font-weight:700;color:#1a1a1a">{obra_sel}</p>
+    <p style="margin:0;font-size:13px;color:#888;font-style:italic">By ESTELLÉ parquet</p></td></tr>
   <tr><td style="padding:14px 30px 0"><hr style="border:none;border-top:1px solid #e8e0d0;margin:0"></td></tr>
-  <tr><td align="center" style="padding:20px 30px 6px"><p style="margin:0;font-size:13px;font-weight:700;color:#7747ff;text-transform:uppercase;letter-spacing:3px;font-family:Montserrat,'Trebuchet MS',sans-serif">Trabajos</p></td></tr>
+  <tr><td align="center" style="padding:20px 30px 6px"><p style="margin:0;font-size:13px;font-weight:700;color:#7747ff;text-transform:uppercase;letter-spacing:3px">Trabajos</p></td></tr>
   <tr><td align="center" style="padding:4px 30px 20px"><table cellpadding="0" cellspacing="0" align="center">{treballs_html}{obs_html}{adjunts_html}</table></td></tr>
   <tr><td style="padding:0 30px"><hr style="border:none;border-top:1px solid #e8e0d0;margin:0"></td></tr>
-  <tr><td align="center" style="padding:20px 30px"><p style="margin:0 0 3px;font-size:12px;color:#aaa;font-family:Montserrat,'Trebuchet MS',sans-serif">Equipo responsable</p>
-    <p style="margin:0;font-size:20px;font-weight:700;color:#8125bb;font-family:Montserrat,'Trebuchet MS',sans-serif">{equip_actual}</p></td></tr>
-  <tr><td align="center" style="padding:16px 30px 24px;border-top:1px solid #e8e0d0">
-    <a href="http://www.estelleparquet.com" style="color:#4e342e;font-size:13px;text-decoration:none;font-family:Montserrat,'Trebuchet MS',sans-serif">www.estelleparquet.com</a>
-    <p style="margin:10px 0 0;font-size:11px;color:#bbb;line-height:1.6;font-family:Montserrat,'Trebuchet MS',sans-serif">Realizamos el seguimiento diario para una óptima comunicación<br>y mejora de nuestros servicios.</p>
-  </td></tr>
+  <tr><td align="center" style="padding:20px 30px"><p style="margin:0 0 3px;font-size:12px;color:#aaa">Equipo responsable</p>
+    <p style="margin:0;font-size:20px;font-weight:700;color:#8125bb">{equip_actual}</p></td></tr>
 </table></td></tr></table>
 </body></html>"""
 
@@ -517,3 +548,4 @@ if enviar:
     else:
         for err in errors:
             st.error(err)
+```

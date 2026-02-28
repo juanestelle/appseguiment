@@ -212,22 +212,25 @@ tipus_sel = col_b.selectbox("Trabajo realizado", df_templates["Tipus"].unique())
 dades_p = df_proj[df_proj["Nom"] == obra_sel].iloc[0]
 dades_t = df_templates[df_templates["Tipus"] == tipus_sel].iloc[0]
 
-# Logo del CLIENT — st.image() el carrega directament des de la URL (cap codi extra)
+# Logo del CLIENT — renderitzat pel NAVEGADOR (client-side), no pel servidor
+# Això evita qualsevol problema de descàrrega des de Streamlit Cloud
 logo_url = str(dades_p.get("Logo_client", "")).strip()
 if logo_url.startswith("http"):
-    try:
-        col_logo, col_nom = st.columns([1, 4])
-        with col_logo:
-            st.image(logo_url, width=120)
-        with col_nom:
-            st.markdown(f"<div style='padding-top:12px;font-size:0.9rem;font-weight:600;"
-                        f"color:#4e342e'>{obra_sel}</div>", unsafe_allow_html=True)
-    except Exception:
-        st.markdown(f"<div style='margin:8px 0 14px;font-size:0.9rem;font-weight:600;"
-                    f"color:#4e342e'>{obra_sel}</div>", unsafe_allow_html=True)
+    st.markdown(f"""
+    <div style="display:flex;align-items:center;gap:14px;margin:10px 0 16px">
+        <img src="{logo_url}"
+             style="height:40px;width:auto;max-width:150px;object-fit:contain"
+             onerror="this.style.display='none';document.getElementById('logo-fallback').style.display='block'">
+        <span id="logo-fallback" style="display:none;font-size:0.75rem;color:#aaa">
+            (logo no disponible)
+        </span>
+        <span style="font-size:0.9rem;font-weight:600;color:#4e342e">{obra_sel}</span>
+    </div>""", unsafe_allow_html=True)
 else:
-    st.markdown(f"<div style='margin:8px 0 14px;font-size:0.9rem;font-weight:600;"
-                f"color:#4e342e'>{obra_sel}</div>", unsafe_allow_html=True)
+    st.markdown(f"""
+    <div style="margin:8px 0 16px;font-size:0.9rem;font-weight:600;color:#4e342e">
+        {obra_sel}
+    </div>""", unsafe_allow_html=True)
 
 
 # ==========================================

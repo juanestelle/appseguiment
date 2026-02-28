@@ -232,16 +232,14 @@ if st.session_state.equip_autenticat is None:
         login_btn = st.form_submit_button("Accedir")
 
     if login_btn:
-       # Normalitzem els dos: eliminem decimals, espais i cometes
-def normalitza_pin(v):
-    s = str(v).strip().replace('"', '').replace("'", "")
-    # Si acaba en .0 (float llegit com string), ho traiem
-    if s.endswith('.0'):
-        s = s[:-2]
-    return s
+        # Normalitzem el PIN: eliminem espais i el .0 que afegeix Sheets als números
+        def norm_pin(v):
+            s = str(v).strip().split('.')[0]  # "456.0" -> "456"
+            return s
 
-pin_net = normalitza_pin(pin_input)
-pin_match = df_equips[df_equips['PIN'].apply(normalitza_pin) == pin_net]
+        pin_net   = norm_pin(pin_input)
+        pin_match = df_equips[df_equips['PIN'].apply(norm_pin) == pin_net]
+
         if not pin_match.empty:
             st.session_state.equip_autenticat = pin_match.iloc[0]['Equip']
             st.rerun()

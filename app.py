@@ -173,7 +173,6 @@ col_logo       = pick_col(df_projectes, ["Logo_Client","Logo_client","Logo","Log
 col_emails     = pick_col(df_projectes, ["Emails_Contacte","Emails_contacte","Emails","Email"])
 col_equip_proj = pick_col(df_projectes, ["Equip","Equipo"])
 col_tipus      = pick_col(df_templates, ["Tipus","Tipo"])
-# Mapeig automàtic dels 10 camps
 CAMPS_COLS = [pick_col(df_templates, [f"Camp{i}"]) for i in range(1, 11)]
 
 col_equip_eq   = pick_col(df_equips,    ["Equip","Equipo"])
@@ -208,12 +207,19 @@ if "auth_user" not in st.session_state:
 equip_actual = str(st.session_state.auth_user).strip()
 
 # ==========================================
-# FILTRAR PROJECTES
+# FILTRAR PROJECTES (Múltiples equips suportats per comes)
 # ==========================================
 if col_equip_proj:
-    eq_norm = df_projectes[col_equip_proj].fillna("").astype(str).str.strip().str.lower()
-    df_proj = df_projectes[(eq_norm == "") | (eq_norm == equip_actual.lower())].copy()
-else: df_proj = df_projectes.copy()
+    def projecte_permet_equip(row_equip):
+        if pd.isna(row_equip) or str(row_equip).strip() == "": 
+            return True
+        # Separem per comes i netegem els espais per permetre múltiples equips
+        llista_equips = [e.strip().lower() for e in str(row_equip).split(",")]
+        return equip_actual.lower() in llista_equips
+
+    df_proj = df_projectes[df_projectes[col_equip_proj].apply(projecte_permet_equip)].copy()
+else: 
+    df_proj = df_projectes.copy()
 
 df_proj = df_proj.drop_duplicates(subset=[col_nom])
 if df_proj.empty: st.warning("No hay proyectos asignados."); st.stop()
@@ -241,7 +247,7 @@ tipus_sel = col_b.selectbox("Trabajo realizado", sorted(df_templates[col_tipus].
 dades_p = df_proj[df_proj[col_nom] == obra_sel].iloc[0]
 dades_t = df_templates[df_templates[col_tipus] == tipus_sel].iloc[0]
 
-logo_url = normalize_logo_url(str(dades_p[col_logo]).strip()) if col_logo and pd.notna(dades_p[col_logo]) else ""
+logo_url = normalize_logo_url(str(dades_p.get(col_logo, "")).strip()) if col_logo and pd.notna(dades_p.get(col_logo, "")) else ""
 logo_bytes = fetch_logo_jpeg(logo_url) if logo_url else None
 with logo_top.container():
     if logo_url.startswith("http"): st.image(logo_url, width=320)
@@ -253,11 +259,9 @@ with logo_top.container():
 st.markdown('<span class="label-up">Medidas y avance</span>', unsafe_allow_html=True)
 
 camps_actius = []
-# Analitzem quins dels 10 camps tenen nom assignat a la fila del template seleccionat
 for i, col_key in enumerate(CAMPS_COLS, 1):
     if col_key and pd.notna(dades_t.get(col_key, "")) and str(dades_t.get(col_key, "")).strip():
         nom_camp = str(dades_t.get(col_key)).strip()
-        # Per defecte: 1-4 són numèrics, 5-10 són text (podeu ajustar si cal)
         tipus = "num" if i <= 4 else "txt"
         camps_actius.append((nom_camp, tipus))
 
@@ -266,14 +270,12 @@ if camps_actius:
     camps_num = [(n, t) for n, t in camps_actius if t == "num"]
     camps_txt = [(n, t) for n, t in camps_actius if t == "txt"]
 
-    # Render numèrics (4 per fila)
     if camps_num:
         cols_num = st.columns(min(len(camps_num), 4))
         for i, (nom, _) in enumerate(camps_num):
             with cols_num[i % 4]:
                 valors_raw[nom] = st.text_input(nom, value="", placeholder="0", key=f"val_num_{i}")
     
-    # Render text (2 per fila per tenir més espai de lectura)
     if camps_txt:
         st.markdown("<div style='margin-top:8px'></div>", unsafe_allow_html=True)
         cols_txt = st.columns(min(len(camps_txt), 2))
@@ -284,7 +286,7 @@ if camps_actius:
 comentaris = st.text_area("Comentarios de la jornada", placeholder="Detalles relevantes...", height=90, key="comentaris")
 
 # ==========================================
-# FOTOS I FIRMES (Resta del codi igual)
+# FOTOS I FIRMES
 # ==========================================
 st.markdown('<div class="panel">', unsafe_allow_html=True)
 st.markdown('<span class="label-up">Reportaje fotográfico</span>', unsafe_allow_html=True)
@@ -308,6 +310,7 @@ if st.session_state.fotos_acumulades:
     t_html = '<div class="foto-thumb-row">'
     for n_f, c_f, _ in st.session_state.fotos_acumulades: t_html += f'<img src="data:image/jpeg;base64,{img_to_thumb_b64(c_f)}">'
     st.markdown(t_html+'</div>', unsafe_allow_html=True)
+    if st.button("🗑 Borrar todas las fotos"): st.session_state.fotos_acumulades = []; st.rerun()
 st.markdown("</div>", unsafe_allow_html=True)
 
 st.markdown('<div class="panel"><span class="label-up">Firmas</span>', unsafe_allow_html=True)
@@ -343,14 +346,168 @@ if st.button("▶ FINALIZAR Y ENVIAR INFORME", type="primary", use_container_wid
             nom = noms_camps[i] if i < len(noms_camps) else ""
             row[f"Dato{i+1}"] = valors_raw.get(nom, "") if nom else ""
         
-        conn.update(worksheet="Seguiment", data=pd.concat([df_seg, pd.DataFrame([row])], ignore_index=True))
-        
-        # Lògica Email (resumida per espai, mantenint la teva funcional)
+        try:
+            conn.update(worksheet="Seguiment", data=pd.concat([df_seg, pd.DataFrame([row])], ignore_index=True))
+        except Exception as e:
+            st.error(f"Error actualizando Sheets: {e}")
+
+        # Lògica Email
         try:
             smtp_cfg = st.secrets["smtp"]
             destinataris = [e.strip() for e in str(dades_p.get(col_emails, "")).split(",") if e.strip()]
             if destinataris:
-                # Aquí aniria tot el bloc de MIMEMultipart que ja tenies (es manté igual)
+                msg = MIMEMultipart("mixed")
+                msg["Subject"]  = f"Seguimiento del proyecto {obra_sel} - Estellé parquet"
+                msg["From"]     = "Estellé Parquet <noreply@estelleparquet.com>"
+                msg["Reply-To"] = smtp_cfg["user"]
+                msg["To"]       = ", ".join(destinataris)
+
+                logo_cid = "logo_client_estelle"
+
+                treballs_html = ""
+                for nom, tipus in camps_actius:
+                    val = valors_raw.get(nom, "").strip()
+                    # Salta els camps que estiguin en blanc, a "0" o a "0.0"
+                    if not val or val == "0" or val == "0.0":
+                        continue
+                    
+                    if tipus == "num":
+                        vf = fmt_valor(to_float_or_zero(val))
+                        treballs_html += f"""
+                        <tr>
+                          <td align="right" style="padding:5px 10px 5px 0;font-size:22px;font-weight:700;
+                              color:#555;font-family:Montserrat,'Trebuchet MS',sans-serif;white-space:nowrap">{vf}</td>
+                          <td align="left" style="padding:5px 0;font-size:17px;color:#888;
+                              font-family:Montserrat,'Trebuchet MS',sans-serif">{nom}</td>
+                        </tr>"""
+                    else:
+                        treballs_html += f"""
+                        <tr>
+                          <td colspan="2" style="padding:5px 0;font-size:15px;
+                              font-family:Montserrat,'Trebuchet MS',sans-serif">
+                            <span style="color:#7747ff;font-weight:600">{nom}:</span>
+                            <span style="color:#555;margin-left:6px">{val}</span>
+                          </td>
+                        </tr>"""
+
+                obs_html = f"""
+                <tr><td colspan="2" style="padding-top:18px">
+                  <p style="margin:0 0 4px;color:#421cad;font-size:13px;font-weight:700;
+                     font-family:Montserrat,'Trebuchet MS',sans-serif;text-transform:uppercase;
+                     letter-spacing:1px">Comentarios de la jornada</p>
+                  <p style="margin:0;color:#6b5ea8;font-size:15px;line-height:1.6;
+                     font-family:Montserrat,'Trebuchet MS',sans-serif">{comentaris}</p>
+                </td></tr>""" if comentaris.strip() else ""
+
+                adj_parts = []
+                if st.session_state.fotos_acumulades: adj_parts.append(f"{len(st.session_state.fotos_acumulades)} foto(s)")
+                if st.session_state.firma_resp_bytes: adj_parts.append("firma responsable")
+                if st.session_state.firma_cli_bytes:  adj_parts.append("firma cliente")
+                adjunts_html = (f"""<tr><td colspan="2" style="padding-top:14px;font-size:12px;color:#aaa;
+                    font-family:Montserrat,'Trebuchet MS',sans-serif">📎 Adjuntos: {", ".join(adj_parts)}</td></tr>"""
+                    if adj_parts else "")
+
+                if logo_bytes:
+                    logo_html = f'<img src="cid:{logo_cid}" width="225" style="display:block;margin:0 auto;max-width:225px;border:0">'
+                elif logo_url.startswith("http"):
+                    logo_html = f'<img src="{logo_url}" width="225" style="display:block;margin:0 auto;max-width:225px;border:0">'
+                else:
+                    logo_html = ""
+
+                def firma_td(label: str, has_firma: bool, filename: str) -> str:
+                    if not has_firma: return ""
+                    return f"""
+                    <td width="50%" style="padding:25px;vertical-align:top">
+                      <p style="margin:0;font-family:Montserrat,'Trebuchet MS',sans-serif;font-size:16px;color:#101112">📎 {label}</p>
+                      <p style="margin:4px 0 0;font-family:Montserrat,'Trebuchet MS',sans-serif;font-size:12px;color:#aaa">{filename}</p>
+                    </td>"""
+
+                firma_resp_td = firma_td("Firma responsable", st.session_state.firma_resp_bytes is not None, "firma_responsable.jpg")
+                firma_cli_td  = firma_td("Firma cliente / propietario", st.session_state.firma_cli_bytes is not None, "firma_cliente.jpg")
+                firmes_row = ""
+                if firma_resp_td or firma_cli_td:
+                    firmes_row = f"""
+                  <tr><td style="padding:0 30px"><hr style="border:none;border-top:1px solid #e8e0d0;margin:0"></td></tr>
+                  <tr><td style="padding:10px 0"><table width="100%" cellpadding="0" cellspacing="0"><tr>{firma_resp_td}{firma_cli_td}</tr></table></td></tr>"""
+
+                # Codi HTML Email - Llevat el fons blanc del logo
+                html = f"""<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#fefdf1">
+<table width="100%" cellpadding="0" cellspacing="0" bgcolor="#fefdf1">
+<tr><td align="center" style="padding:30px 10px">
+<table width="580" cellpadding="0" cellspacing="0"
+  style="background:#fff9e5;border-radius:14px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.06)">
+  <tr><td align="center" style="padding:32px 30px 16px;">{logo_html}</td></tr>
+  <tr><td align="center" style="padding:16px 30px 8px">
+    <p style="margin:0;color:#7747ff;font-size:17px;font-family:Montserrat,'Trebuchet MS',sans-serif">
+      {datetime.now().strftime("%d · %m · %Y")}</p></td></tr>
+  <tr><td style="padding:0 30px"><hr style="border:none;border-top:1px solid #e8e0d0;margin:0"></td></tr>
+  <tr><td align="center" style="padding:22px 30px 8px">
+    <p style="margin:0 0 4px;font-size:11px;color:#777;text-transform:uppercase;letter-spacing:2px;
+       font-family:Montserrat,'Trebuchet MS',sans-serif">Proyecto</p>
+    <p style="margin:0 0 4px;font-size:20px;font-weight:700;color:#1a1a1a;
+       font-family:Montserrat,'Trebuchet MS',sans-serif">{obra_sel}</p>
+    <p style="margin:0;font-size:13px;color:#888;font-style:italic;
+       font-family:Montserrat,'Trebuchet MS',sans-serif">By ESTELLÉ parquet</p></td></tr>
+  <tr><td style="padding:14px 30px 0"><hr style="border:none;border-top:1px solid #e8e0d0;margin:0"></td></tr>
+  <tr><td align="center" style="padding:20px 30px 6px">
+    <p style="margin:0;font-size:13px;font-weight:700;color:#7747ff;text-transform:uppercase;
+       letter-spacing:3px;font-family:Montserrat,'Trebuchet MS',sans-serif">Trabajos</p></td></tr>
+  <tr><td align="center" style="padding:4px 30px 20px">
+    <table cellpadding="0" cellspacing="0" align="center">
+      {treballs_html}{obs_html}{adjunts_html}
+    </table></td></tr>
+  <tr><td style="padding:0 30px"><hr style="border:none;border-top:1px solid #e8e0d0;margin:0"></td></tr>
+  <tr><td align="center" style="padding:20px 30px">
+    <p style="margin:0 0 3px;font-size:12px;color:#aaa;font-family:Montserrat,'Trebuchet MS',sans-serif">
+      Equipo responsable</p>
+    <p style="margin:0;font-size:20px;font-weight:700;color:#8125bb;
+       font-family:Montserrat,'Trebuchet MS',sans-serif">{equip_actual}</p></td></tr>
+  {firmes_row}
+  <tr><td align="center" style="padding:16px 30px 24px;border-top:1px solid #e8e0d0">
+    <a href="http://www.estelleparquet.com" style="color:#4e342e;font-size:13px;text-decoration:none;
+       font-family:Montserrat,'Trebuchet MS',sans-serif">www.estelleparquet.com</a>
+    <p style="margin:8px 0 0;font-size:12px;color:#888;line-height:1.6;
+       font-family:Montserrat,'Trebuchet MS',sans-serif">
+      Realizamos el seguimiento diario para una óptima comunicación y mejora de nuestros servicios.</p>
+  </td></tr>
+</table></td></tr></table>
+</body></html>"""
+
+                body_related = MIMEMultipart("related")
+                body_alt     = MIMEMultipart("alternative")
+                body_alt.attach(MIMEText(html, "html"))
+                body_related.attach(body_alt)
+
+                if logo_bytes:
+                    img_logo = MIMEImage(logo_bytes, _subtype="jpeg")
+                    img_logo.add_header("Content-ID", f"<{logo_cid}>")
+                    img_logo.add_header("Content-Disposition", "inline", filename="logo_client.jpg")
+                    body_related.attach(img_logo)
+
+                msg.attach(body_related)
+
+                adjunts_finals = list(st.session_state.fotos_acumulades)
+                if st.session_state.firma_resp_bytes:
+                    adjunts_finals.append(("firma_responsable.jpg", st.session_state.firma_resp_bytes, "image/jpeg"))
+                if st.session_state.firma_cli_bytes:
+                    adjunts_finals.append(("firma_cliente.jpg", st.session_state.firma_cli_bytes, "image/jpeg"))
+
+                for nom_f, contingut, mime_t in adjunts_finals:
+                    p1, p2 = (mime_t.split("/") + ["octet-stream"])[:2]
+                    adj = MIMEBase(p1, p2)
+                    adj.set_payload(contingut)
+                    encoders.encode_base64(adj)
+                    adj.add_header("Content-Disposition", "attachment", filename=nom_f)
+                    msg.attach(adj)
+
+                with smtplib.SMTP(smtp_cfg["server"], smtp_cfg["port"]) as s:
+                    s.starttls()
+                    s.login(smtp_cfg["user"], smtp_cfg["password"])
+                    s.sendmail(smtp_cfg["user"], destinataris, msg.as_string())
+
                 st.markdown('<div class="success-box"><h4>✔ Informe enviado correctamente</h4></div>', unsafe_allow_html=True)
                 st.session_state.fotos_acumulades = []; st.session_state.firma_resp_bytes = None; st.session_state.firma_cli_bytes = None
+
         except Exception as e: st.error(f"Error Email: {e}")

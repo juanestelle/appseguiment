@@ -489,22 +489,24 @@ if enviar:
                 else:
                     logo_html = ""
 
-                # Firmes inline via CID (data: URI és bloquejat per Gmail/Outlook)
+                # Firmes com adjunts normals — garantit en tots els clients de correu
+                # (cid: inline falla amb Gmail SMTP; data: URI és bloquejat per seguretat)
                 firma_resp_cid = "firma_responsable_cid"
                 firma_cli_cid  = "firma_cliente_cid"
 
-                def firma_td(cid: str, label: str, has_firma: bool) -> str:
+                def firma_td(label: str, has_firma: bool, filename: str) -> str:
                     if not has_firma:
                         return ""
                     return f"""
                     <td width="50%" style="padding:25px;vertical-align:top">
-                      <p style="margin:0 0 8px;font-family:Montserrat,'Trebuchet MS',sans-serif;
-                         font-size:16px;color:#101112">{label}</p>
-                      <img src="cid:{cid}" style="max-width:200px;max-height:150px;display:block;border:0">
+                      <p style="margin:0;font-family:Montserrat,'Trebuchet MS',sans-serif;
+                         font-size:16px;color:#101112">📎 {label}</p>
+                      <p style="margin:4px 0 0;font-family:Montserrat,'Trebuchet MS',sans-serif;
+                         font-size:12px;color:#aaa">{filename}</p>
                     </td>"""
 
-                firma_resp_td = firma_td(firma_resp_cid, "Firma responsable",        firma_resp is not None)
-                firma_cli_td  = firma_td(firma_cli_cid,  "Firma cliente / propietario", firma_cli is not None)
+                firma_resp_td = firma_td("Firma responsable",          firma_resp is not None, "firma_responsable.jpg")
+                firma_cli_td  = firma_td("Firma cliente / propietario", firma_cli is not None,  "firma_cliente.jpg")
                 firmes_row = ""
                 if firma_resp_td or firma_cli_td:
                     firmes_row = f"""
@@ -572,20 +574,9 @@ if enviar:
                     img_logo.add_header("Content-Disposition", "inline", filename="logo_client.jpg")
                     body_related.attach(img_logo)
 
-                if firma_resp:
-                    img_fr = MIMEImage(firma_resp, _subtype="jpeg")
-                    img_fr.add_header("Content-ID", f"<{firma_resp_cid}>")
-                    img_fr.add_header("Content-Disposition", "inline", filename="firma_responsable.jpg")
-                    body_related.attach(img_fr)
-
-                if firma_cli:
-                    img_fc = MIMEImage(firma_cli, _subtype="jpeg")
-                    img_fc.add_header("Content-ID", f"<{firma_cli_cid}>")
-                    img_fc.add_header("Content-Disposition", "inline", filename="firma_cliente.jpg")
-                    body_related.attach(img_fc)
-
                 msg.attach(body_related)
 
+                # Fotos com adjunts
                 for nom_f, contingut, mime_t in totes_fotos:
                     p1, p2 = (mime_t.split("/") + ["octet-stream"])[:2]
                     adj = MIMEBase(p1, p2)
@@ -593,6 +584,16 @@ if enviar:
                     encoders.encode_base64(adj)
                     adj.add_header("Content-Disposition", "attachment", filename=nom_f)
                     msg.attach(adj)
+
+                # Firmes com adjunts normals (garantit en tots els clients de correu)
+                if firma_resp:
+                    adj_fr = MIMEImage(firma_resp, _subtype="jpeg")
+                    adj_fr.add_header("Content-Disposition", "attachment", filename="firma_responsable.jpg")
+                    msg.attach(adj_fr)
+                if firma_cli:
+                    adj_fc = MIMEImage(firma_cli, _subtype="jpeg")
+                    adj_fc.add_header("Content-Disposition", "attachment", filename="firma_cliente.jpg")
+                    msg.attach(adj_fc)
 
                 with smtplib.SMTP(smtp_cfg["server"], smtp_cfg["port"]) as s:
                     s.starttls()

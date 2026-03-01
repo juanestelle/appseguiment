@@ -213,21 +213,16 @@ tipus_sel = col_b.selectbox("Trabajo realizado", df_templates["Tipus"].unique())
 dades_p = df_proj[df_proj["Nom"] == obra_sel].iloc[0]
 dades_t = df_templates[df_templates["Tipus"] == tipus_sel].iloc[0]
 
-# Logo del CLIENT — via components.html (iframe propi, sense restriccions CSP)
+# Logo del CLIENT — st.image() amb URL pública funciona nativamente
 logo_url = str(dades_p.get("Logo_client", "")).strip()
-if logo_url.startswith("http"):
-    components.html(f"""
-    <div style="display:flex;align-items:center;gap:14px;padding:4px 0 10px">
-        <img src="{logo_url}"
-             style="height:40px;width:auto;max-width:150px;object-fit:contain"
-             onerror="this.style.display='none'">
-        <span style="font-size:15px;font-weight:600;color:#4e342e;font-family:Inter,sans-serif">
-            {obra_sel}
-        </span>
-    </div>""", height=60)
-else:
-    st.markdown(f"""<div style="margin:8px 0 16px;font-size:0.9rem;font-weight:600;color:#4e342e">
-        {obra_sel}</div>""", unsafe_allow_html=True)
+col_logo, col_nom = st.columns([1, 3])
+with col_logo:
+    if logo_url.startswith("http"):
+        st.image(logo_url, width=130)
+with col_nom:
+    st.markdown(f"<div style='padding-top:14px;font-size:0.95rem;font-weight:600;"
+                f"color:#4e342e'>{obra_sel}</div>", unsafe_allow_html=True)
+st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
 
 
 # ==========================================

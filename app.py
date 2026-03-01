@@ -489,30 +489,31 @@ if enviar:
                 else:
                     logo_html = ""
 
-                # Firmes inline com base64 (no com adjunts)
-                def firma_img_html(firma_bytes: Optional[bytes], label: str) -> str:
-                    if not firma_bytes:
+                # Firmes inline via CID (data: URI és bloquejat per Gmail/Outlook)
+                firma_resp_cid = "firma_responsable_cid"
+                firma_cli_cid  = "firma_cliente_cid"
+
+                def firma_td(cid: str, label: str, has_firma: bool) -> str:
+                    if not has_firma:
                         return ""
-                    b64 = base64.b64encode(firma_bytes).decode()
                     return f"""
                     <td width="50%" style="padding:25px;vertical-align:top">
                       <p style="margin:0 0 8px;font-family:Montserrat,'Trebuchet MS',sans-serif;
                          font-size:16px;color:#101112">{label}</p>
-                      <img src="data:image/jpeg;base64,{b64}"
-                           style="max-width:200px;max-height:150px;display:block">
+                      <img src="cid:{cid}" style="max-width:200px;max-height:150px;display:block;border:0">
                     </td>"""
 
-                firma_resp_html = firma_img_html(firma_resp, "Firma responsable")
-                firma_cli_html  = firma_img_html(firma_cli,  "Firma cliente / propietario")
+                firma_resp_td = firma_td(firma_resp_cid, "Firma responsable",        firma_resp is not None)
+                firma_cli_td  = firma_td(firma_cli_cid,  "Firma cliente / propietario", firma_cli is not None)
                 firmes_row = ""
-                if firma_resp_html or firma_cli_html:
+                if firma_resp_td or firma_cli_td:
                     firmes_row = f"""
                   <tr><td style="padding:0 30px">
                     <hr style="border:none;border-top:1px solid #e8e0d0;margin:0">
                   </td></tr>
                   <tr><td style="padding:10px 0">
                     <table width="100%" cellpadding="0" cellspacing="0">
-                      <tr>{firma_resp_html}{firma_cli_html}</tr>
+                      <tr>{firma_resp_td}{firma_cli_td}</tr>
                     </table>
                   </td></tr>"""
 
@@ -566,10 +567,22 @@ if enviar:
                 body_related.attach(body_alt)
 
                 if logo_bytes_email:
-                    img_part = MIMEImage(logo_bytes_email, _subtype="jpeg")
-                    img_part.add_header("Content-ID", f"<{logo_cid}>")
-                    img_part.add_header("Content-Disposition", "inline", filename="logo_client.jpg")
-                    body_related.attach(img_part)
+                    img_logo = MIMEImage(logo_bytes_email, _subtype="jpeg")
+                    img_logo.add_header("Content-ID", f"<{logo_cid}>")
+                    img_logo.add_header("Content-Disposition", "inline", filename="logo_client.jpg")
+                    body_related.attach(img_logo)
+
+                if firma_resp:
+                    img_fr = MIMEImage(firma_resp, _subtype="jpeg")
+                    img_fr.add_header("Content-ID", f"<{firma_resp_cid}>")
+                    img_fr.add_header("Content-Disposition", "inline", filename="firma_responsable.jpg")
+                    body_related.attach(img_fr)
+
+                if firma_cli:
+                    img_fc = MIMEImage(firma_cli, _subtype="jpeg")
+                    img_fc.add_header("Content-ID", f"<{firma_cli_cid}>")
+                    img_fc.add_header("Content-Disposition", "inline", filename="firma_cliente.jpg")
+                    body_related.attach(img_fc)
 
                 msg.attach(body_related)
 

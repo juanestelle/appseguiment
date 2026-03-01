@@ -408,6 +408,12 @@ if enviar:
     firma_resp = st.session_state.firma_resp_bytes
     firma_cli  = st.session_state.firma_cli_bytes
 
+    # Debug visual — confirma qué s'enviarà
+    debug_parts = [f"fotos:{len(st.session_state.fotos_acumulades)}"]
+    debug_parts.append(f"firma_resp:{'✔ ' + str(len(firma_resp)) + 'b' if firma_resp else '✗ None'}")
+    debug_parts.append(f"firma_cli:{'✔ ' + str(len(firma_cli)) + 'b' if firma_cli else '✗ None'}")
+    st.caption("Debug envio: " + " | ".join(debug_parts))
+
     totes_fotos = list(st.session_state.fotos_acumulades)
     # Les firmes van inline al cos del correu, NO com adjunts
 
@@ -576,24 +582,20 @@ if enviar:
 
                 msg.attach(body_related)
 
-                # Fotos com adjunts
-                for nom_f, contingut, mime_t in totes_fotos:
+                # Fotos i firmes — mateix patró MIMEBase garantit
+                adjunts_finals = list(totes_fotos)
+                if firma_resp:
+                    adjunts_finals.append(("firma_responsable.jpg", firma_resp, "image/jpeg"))
+                if firma_cli:
+                    adjunts_finals.append(("firma_cliente.jpg", firma_cli, "image/jpeg"))
+
+                for nom_f, contingut, mime_t in adjunts_finals:
                     p1, p2 = (mime_t.split("/") + ["octet-stream"])[:2]
                     adj = MIMEBase(p1, p2)
                     adj.set_payload(contingut)
                     encoders.encode_base64(adj)
                     adj.add_header("Content-Disposition", "attachment", filename=nom_f)
                     msg.attach(adj)
-
-                # Firmes com adjunts normals (garantit en tots els clients de correu)
-                if firma_resp:
-                    adj_fr = MIMEImage(firma_resp, _subtype="jpeg")
-                    adj_fr.add_header("Content-Disposition", "attachment", filename="firma_responsable.jpg")
-                    msg.attach(adj_fr)
-                if firma_cli:
-                    adj_fc = MIMEImage(firma_cli, _subtype="jpeg")
-                    adj_fc.add_header("Content-Disposition", "attachment", filename="firma_cliente.jpg")
-                    msg.attach(adj_fc)
 
                 with smtplib.SMTP(smtp_cfg["server"], smtp_cfg["port"]) as s:
                     s.starttls()

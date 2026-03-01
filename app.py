@@ -213,7 +213,6 @@ if col_equip_proj:
     def projecte_permet_equip(row_equip):
         if pd.isna(row_equip) or str(row_equip).strip() == "": 
             return True
-        # Separem per comes i netegem els espais per permetre múltiples equips
         llista_equips = [e.strip().lower() for e in str(row_equip).split(",")]
         return equip_actual.lower() in llista_equips
 
@@ -243,6 +242,8 @@ with col_out:
 col_a, col_b = st.columns(2)
 obra_sel  = col_a.selectbox("Proyecto", sorted(df_proj[col_nom].tolist()))
 tipus_sel = col_b.selectbox("Trabajo realizado", sorted(df_templates[col_tipus].tolist()))
+
+membres_equip = st.text_input("Otros miembros del equipo en obra (opcional)", placeholder="Ej: Edgar, Eric, Mario", key="membres_equip")
 
 dades_p = df_proj[df_proj[col_nom] == obra_sel].iloc[0]
 dades_t = df_templates[df_templates[col_tipus] == tipus_sel].iloc[0]
@@ -333,12 +334,13 @@ if st.button("▶ FINALIZAR Y ENVIAR INFORME", type="primary", use_container_wid
         try:
             df_seg = normalize_columns(conn.read(worksheet="Seguiment", ttl=0)).dropna(how="all")
         except:
-            df_seg = pd.DataFrame(columns=["Fecha","Hora","Equipo","Proyecto","Trabajo"] + [f"Dato{i}" for i in range(1,11)] + ["Comentarios","Fotos","Firmas"])
+            df_seg = pd.DataFrame(columns=["Fecha","Hora","Equipo","Miembros","Proyecto","Trabajo"] + [f"Dato{i}" for i in range(1,11)] + ["Comentarios","Fotos","Firmas"])
         
         noms_camps = [n for n, _ in camps_actius]
         row = {
             "Fecha": datetime.now().strftime("%d/%m/%Y"), "Hora": datetime.now().strftime("%H:%M"),
-            "Equipo": equip_actual, "Proyecto": obra_sel, "Trabajo": tipus_sel,
+            "Equipo": equip_actual, "Miembros": membres_equip.strip(),
+            "Proyecto": obra_sel, "Trabajo": tipus_sel,
             "Comentarios": comentaris, "Fotos": len(st.session_state.fotos_acumulades),
             "Firmas": ("Resp" if st.session_state.firma_resp_bytes else "") + (" · Cli" if st.session_state.firma_cli_bytes else "")
         }
@@ -430,7 +432,21 @@ if st.button("▶ FINALIZAR Y ENVIAR INFORME", type="primary", use_container_wid
                   <tr><td style="padding:0 30px"><hr style="border:none;border-top:1px solid #e8e0d0;margin:0"></td></tr>
                   <tr><td style="padding:10px 0"><table width="100%" cellpadding="0" cellspacing="0"><tr>{firma_resp_td}{firma_cli_td}</tr></table></td></tr>"""
 
-                # Codi HTML Email - Llevat el fons blanc del logo
+                # Nova secció d'equip opcional
+                equip_html = ""
+                if membres_equip.strip():
+                    equip_html = f"""
+                    <table width="60%" cellpadding="0" cellspacing="0" align="center" style="margin-top:16px;">
+                      <tr><td style="border-top:1px solid #e8e0d0; padding-top:16px;" align="center">
+                        <p style="margin:0 0 3px;font-size:14px;color:#aaa;font-weight:600;font-family:Montserrat,'Trebuchet MS',sans-serif">
+                          Equipo</p>
+                        <p style="margin:0;font-size:18px;font-weight:600;color:#8125bb;
+                           font-family:Montserrat,'Trebuchet MS',sans-serif">{membres_equip.strip()}</p>
+                      </td></tr>
+                    </table>
+                    """
+
+                # Codi HTML Email - Actualitzat amb "Responsable en obra" i l'equip opcional
                 html = f"""<!DOCTYPE html>
 <html lang="es"><head><meta charset="UTF-8"></head>
 <body style="margin:0;padding:0;background:#fefdf1">
@@ -460,10 +476,12 @@ if st.button("▶ FINALIZAR Y ENVIAR INFORME", type="primary", use_container_wid
     </table></td></tr>
   <tr><td style="padding:0 30px"><hr style="border:none;border-top:1px solid #e8e0d0;margin:0"></td></tr>
   <tr><td align="center" style="padding:20px 30px">
-    <p style="margin:0 0 3px;font-size:12px;color:#aaa;font-family:Montserrat,'Trebuchet MS',sans-serif">
-      Equipo responsable</p>
+    <p style="margin:0 0 3px;font-size:14px;color:#aaa;font-weight:600;font-family:Montserrat,'Trebuchet MS',sans-serif">
+      Responsable en obra</p>
     <p style="margin:0;font-size:20px;font-weight:700;color:#8125bb;
-       font-family:Montserrat,'Trebuchet MS',sans-serif">{equip_actual}</p></td></tr>
+       font-family:Montserrat,'Trebuchet MS',sans-serif">{equip_actual}</p>
+    {equip_html}
+  </td></tr>
   {firmes_row}
   <tr><td align="center" style="padding:16px 30px 24px;border-top:1px solid #e8e0d0">
     <a href="http://www.estelleparquet.com" style="color:#4e342e;font-size:13px;text-decoration:none;

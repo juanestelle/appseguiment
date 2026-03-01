@@ -188,6 +188,16 @@ col_tipus      = pick_col(df_templates, ["Tipus","Tipo"])
 col_camp1      = pick_col(df_templates, ["Camp1"])
 col_camp2      = pick_col(df_templates, ["Camp2"])
 col_camp3      = pick_col(df_templates, ["Camp3"])
+col_camp4      = pick_col(df_templates, ["Camp4"])
+col_camp5      = pick_col(df_templates, ["Camp5"])
+col_camp6      = pick_col(df_templates, ["Camp6"])
+col_camp7      = pick_col(df_templates, ["Camp7"])
+col_camp8      = pick_col(df_templates, ["Camp8"])
+col_camp9      = pick_col(df_templates, ["Camp9"])
+col_camp10     = pick_col(df_templates, ["Camp10"])
+# Camp1-4 → numèrics | Camp5-10 → text
+CAMPS_NUMERIC  = [col_camp1, col_camp2, col_camp3, col_camp4]
+CAMPS_TEXT     = [col_camp5, col_camp6, col_camp7, col_camp8, col_camp9, col_camp10]
 col_equip_eq   = pick_col(df_equips,    ["Equip","Equipo"])
 col_pin        = pick_col(df_equips,    ["PIN","Pin","pin"])
 
@@ -285,17 +295,36 @@ with logo_top.container():
 # ==========================================
 st.markdown('<span class="label-up">Medidas y avance</span>', unsafe_allow_html=True)
 
-camps_actius = []
-for fc in [col_camp1, col_camp2, col_camp3]:
+# Construïm llista de camps actius amb el seu tipus
+# [ (nom_etiqueta, "num" o "txt", index_global), ... ]
+camps_actius = []  # (nom, tipus)
+for fc in CAMPS_NUMERIC:
     if fc and pd.notna(dades_t.get(fc, "")) and str(dades_t.get(fc, "")).strip():
-        camps_actius.append(str(dades_t.get(fc)))
+        camps_actius.append((str(dades_t.get(fc)), "num"))
+for fc in CAMPS_TEXT:
+    if fc and pd.notna(dades_t.get(fc, "")) and str(dades_t.get(fc, "")).strip():
+        camps_actius.append((str(dades_t.get(fc)), "txt"))
 
-valors_txt = ["", "", ""]
+# Renderitzar en files de màxim 4 columnes
+valors_raw = {}  # {nom: valor}
 if camps_actius:
-    m_cols = st.columns(len(camps_actius))
-    for i, nom in enumerate(camps_actius):
-        with m_cols[i]:
-            valors_txt[i] = st.text_input(nom, value="", placeholder="Escriu quantitat", key=f"val_{i}")
+    # Primer els numèrics
+    camps_num = [(n, t) for n, t in camps_actius if t == "num"]
+    camps_txt = [(n, t) for n, t in camps_actius if t == "txt"]
+
+    if camps_num:
+        cols_num = st.columns(min(len(camps_num), 4))
+        for i, (nom, _) in enumerate(camps_num):
+            with cols_num[i % 4]:
+                valors_raw[nom] = st.text_input(nom, value="", placeholder="0",
+                                                key=f"val_num_{i}")
+    if camps_txt:
+        st.markdown("<div style='margin-top:8px'></div>", unsafe_allow_html=True)
+        cols_txt = st.columns(min(len(camps_txt), 3))
+        for i, (nom, _) in enumerate(camps_txt):
+            with cols_txt[i % 3]:
+                valors_raw[nom] = st.text_input(nom, value="", placeholder="—",
+                                                key=f"val_txt_{i}")
 
 comentaris = st.text_area("Comentarios de la jornada",
                            placeholder="Describe detalles relevantes del trabajo...",
@@ -401,18 +430,8 @@ enviar = st.button("▶  FINALIZAR Y ENVIAR INFORME", type="primary", use_contai
 # ENVIAMENT
 # ==========================================
 if enviar:
-    v1 = to_float_or_zero(valors_txt[0])
-    v2 = to_float_or_zero(valors_txt[1])
-    v3 = to_float_or_zero(valors_txt[2])
-
     firma_resp = st.session_state.firma_resp_bytes
     firma_cli  = st.session_state.firma_cli_bytes
-
-    # Debug visual — confirma qué s'enviarà
-    debug_parts = [f"fotos:{len(st.session_state.fotos_acumulades)}"]
-    debug_parts.append(f"firma_resp:{'✔ ' + str(len(firma_resp)) + 'b' if firma_resp else '✗ None'}")
-    debug_parts.append(f"firma_cli:{'✔ ' + str(len(firma_cli)) + 'b' if firma_cli else '✗ None'}")
-    st.caption("Debug envio: " + " | ".join(debug_parts))
 
     totes_fotos = list(st.session_state.fotos_acumulades)
     # Les firmes van inline al cos del correu, NO com adjunts
@@ -426,19 +445,29 @@ if enviar:
                 df_seg = normalize_columns(conn.read(worksheet="Seguiment", ttl=0)).dropna(how="all")
             except Exception:
                 df_seg = pd.DataFrame(columns=["Fecha","Hora","Equipo","Proyecto","Trabajo",
-                                                "Dato1","Dato2","Dato3","Comentarios","Fotos","Firmas"])
-            nova = pd.DataFrame([{
+                                                "Dato1","Dato2","Dato3","Dato4","Dato5",
+                                                "Dato6","Dato7","Dato8","Dato9","Dato10",
+                                                "Comentarios","Fotos","Firmas"])
+
+            # Construïm diccionari Dato1..Dato10
+            noms_camps = [n for n, _ in camps_actius]
+            dades_fila = {
                 "Fecha":       datetime.now().strftime("%d/%m/%Y"),
                 "Hora":        datetime.now().strftime("%H:%M"),
                 "Equipo":      equip_actual,
                 "Proyecto":    obra_sel,
                 "Trabajo":     tipus_sel,
-                "Dato1":       v1, "Dato2": v2, "Dato3": v3,
                 "Comentarios": comentaris,
                 "Fotos":       len(st.session_state.fotos_acumulades),
                 "Firmas":      ("Resp" if firma_resp else "") + (" · Cliente" if firma_cli else "")
-            }])
-            conn.update(worksheet="Seguiment", data=pd.concat([df_seg, nova], ignore_index=True))
+            }
+            for i in range(10):
+                nom = noms_camps[i] if i < len(noms_camps) else ""
+                val = valors_raw.get(nom, "") if nom else ""
+                dades_fila[f"Dato{i+1}"] = val
+
+            conn.update(worksheet="Seguiment",
+                        data=pd.concat([df_seg, pd.DataFrame([dades_fila])], ignore_index=True))
         except Exception as e:
             errors.append(f"Sheets: {e}")
 
@@ -459,15 +488,30 @@ if enviar:
                 logo_cid = "logo_client_estelle"
 
                 treballs_html = ""
-                for i, nom in enumerate(camps_actius):
-                    vf = fmt_valor([v1, v2, v3][i])
-                    treballs_html += f"""
-                    <tr>
-                      <td align="right" style="padding:5px 10px 5px 0;font-size:22px;font-weight:700;
-                          color:#555;font-family:Montserrat,'Trebuchet MS',sans-serif;white-space:nowrap">{vf}</td>
-                      <td align="left" style="padding:5px 0;font-size:17px;color:#888;
-                          font-family:Montserrat,'Trebuchet MS',sans-serif">{nom}</td>
-                    </tr>"""
+                for nom, tipus in camps_actius:
+                    val = valors_raw.get(nom, "").strip()
+                    if not val:
+                        continue  # no mostrar camps buits a l'email
+                    if tipus == "num":
+                        # Mostra com número gran + etiqueta
+                        vf = fmt_valor(to_float_or_zero(val)) if val else "0"
+                        treballs_html += f"""
+                        <tr>
+                          <td align="right" style="padding:5px 10px 5px 0;font-size:22px;font-weight:700;
+                              color:#555;font-family:Montserrat,'Trebuchet MS',sans-serif;white-space:nowrap">{vf}</td>
+                          <td align="left" style="padding:5px 0;font-size:17px;color:#888;
+                              font-family:Montserrat,'Trebuchet MS',sans-serif">{nom}</td>
+                        </tr>"""
+                    else:
+                        # Text: etiqueta en morat + valor
+                        treballs_html += f"""
+                        <tr>
+                          <td colspan="2" style="padding:5px 0;font-size:15px;
+                              font-family:Montserrat,'Trebuchet MS',sans-serif">
+                            <span style="color:#7747ff;font-weight:600">{nom}:</span>
+                            <span style="color:#555;margin-left:6px">{val}</span>
+                          </td>
+                        </tr>"""
 
                 obs_html = f"""
                 <tr><td colspan="2" style="padding-top:18px">

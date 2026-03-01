@@ -119,6 +119,7 @@ def normalize_logo_url(url: str) -> str:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_logo_jpeg(url: str) -> Optional[bytes]:
+    """Descarrega el logo i el composa sobre el fons #fff9e5 del correu (preserva transparències)."""
     u = normalize_logo_url(url)
     if not u.startswith("http"):
         return None
@@ -127,10 +128,17 @@ def fetch_logo_jpeg(url: str) -> Optional[bytes]:
         with urllib.request.urlopen(req, timeout=12, context=ssl.create_default_context()) as r:
             data = r.read()
         img = Image.open(BytesIO(data))
-        img = ImageOps.exif_transpose(img).convert("RGB")
-        img.thumbnail((1200, 400))
+        img = ImageOps.exif_transpose(img)
+        img.thumbnail((600, 200))
+        # Composar sobre el fons groguenc del correu per preservar transparències del logo
+        fons = Image.new("RGB", img.size, (255, 249, 229))  # #fff9e5
+        if img.mode in ("RGBA", "LA", "P"):
+            img = img.convert("RGBA")
+            fons.paste(img, mask=img.split()[3])
+        else:
+            fons.paste(img.convert("RGB"))
         out = BytesIO()
-        img.save(out, format="JPEG", quality=90, optimize=True)
+        fons.save(out, format="JPEG", quality=92, optimize=True)
         return out.getvalue()
     except Exception:
         return None
@@ -401,8 +409,7 @@ if enviar:
     firma_cli  = st.session_state.firma_cli_bytes
 
     totes_fotos = list(st.session_state.fotos_acumulades)
-    if firma_resp: totes_fotos.append(("firma_responsable.jpg", firma_resp, "image/jpeg"))
-    if firma_cli:  totes_fotos.append(("firma_cliente.jpg",     firma_cli,  "image/jpeg"))
+    # Les firmes van inline al cos del correu, NO com adjunts
 
     with st.spinner("Enviando informe..."):
         errors = []
@@ -474,13 +481,40 @@ if enviar:
                     if adj_parts else "")
 
                 if logo_bytes_email:
-                    logo_html = (f'<img src="cid:{logo_cid}" style="display:block;margin:0 auto;'
-                                 f'max-height:80px;max-width:220px;object-fit:contain;border:0">')
+                    logo_html = (f'<img src="cid:{logo_cid}" width="225" style="display:block;margin:0 auto;'
+                                 f'max-width:225px;border:0">')
                 elif logo_url.startswith("http"):
-                    logo_html = (f'<img src="{logo_url}" style="display:block;margin:0 auto;'
-                                 f'max-height:80px;max-width:220px;object-fit:contain;border:0">')
+                    logo_html = (f'<img src="{logo_url}" width="225" style="display:block;margin:0 auto;'
+                                 f'max-width:225px;border:0">')
                 else:
                     logo_html = ""
+
+                # Firmes inline com base64 (no com adjunts)
+                def firma_img_html(firma_bytes: Optional[bytes], label: str) -> str:
+                    if not firma_bytes:
+                        return ""
+                    b64 = base64.b64encode(firma_bytes).decode()
+                    return f"""
+                    <td width="50%" style="padding:25px;vertical-align:top">
+                      <p style="margin:0 0 8px;font-family:Montserrat,'Trebuchet MS',sans-serif;
+                         font-size:16px;color:#101112">{label}</p>
+                      <img src="data:image/jpeg;base64,{b64}"
+                           style="max-width:200px;max-height:150px;display:block">
+                    </td>"""
+
+                firma_resp_html = firma_img_html(firma_resp, "Firma responsable")
+                firma_cli_html  = firma_img_html(firma_cli,  "Firma cliente / propietario")
+                firmes_row = ""
+                if firma_resp_html or firma_cli_html:
+                    firmes_row = f"""
+                  <tr><td style="padding:0 30px">
+                    <hr style="border:none;border-top:1px solid #e8e0d0;margin:0">
+                  </td></tr>
+                  <tr><td style="padding:10px 0">
+                    <table width="100%" cellpadding="0" cellspacing="0">
+                      <tr>{firma_resp_html}{firma_cli_html}</tr>
+                    </table>
+                  </td></tr>"""
 
                 html = f"""<!DOCTYPE html>
 <html lang="es"><head><meta charset="UTF-8"></head>
@@ -515,6 +549,7 @@ if enviar:
       Equipo responsable</p>
     <p style="margin:0;font-size:20px;font-weight:700;color:#8125bb;
        font-family:Montserrat,'Trebuchet MS',sans-serif">{equip_actual}</p></td></tr>
+  {firmes_row}
   <tr><td align="center" style="padding:16px 30px 24px;border-top:1px solid #e8e0d0">
     <a href="http://www.estelleparquet.com" style="color:#4e342e;font-size:13px;text-decoration:none;
        font-family:Montserrat,'Trebuchet MS',sans-serif">www.estelleparquet.com</a>

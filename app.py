@@ -156,6 +156,19 @@ def pick_col(df: pd.DataFrame, options: list) -> Optional[str]:
         if opt.lower() in cols_l: return cols_l[opt.lower()]
     return None
 
+# FUNCIÓ PER ORDENAR AMB ELEMENTS AL FINAL
+def sort_with_tail(items_list):
+    """Ordena una llista posant 'Visita técnica', 'Reparaciones' i 'Final de obra' al final."""
+    tail_items = ["Visita técnica", "Reparaciones", "Final de obra"]
+    # Netegem de duplicats i valors buits
+    clean_list = list(set([str(x).strip() for x in items_list if pd.notna(x) and str(x).strip()]))
+    
+    # Separem els que han d'anar al final
+    main = sorted([x for x in clean_list if x not in tail_items])
+    tail = [x for x in tail_items if x in clean_list]
+    
+    return main + tail
+
 # ==========================================
 # CONNEXIÓ SHEETS
 # ==========================================
@@ -172,7 +185,6 @@ col_nom         = pick_col(df_projectes, ["Nom","Nombre","Projecte","Proyecto"])
 col_logo        = pick_col(df_projectes, ["Logo_Client","Logo_client","Logo","LogoClient"])
 col_emails      = pick_col(df_projectes, ["Emails_Contacte","Emails_contacte","Emails","Email"])
 col_equip_proj  = pick_col(df_projectes, ["Equip","Equipo"])
-# COLUMNA NOVA: Treball prioritari o per defecte
 col_treball_def = pick_col(df_projectes, ["Treball_Predeterminat", "Treball_Prioritari", "Trabajo_Prioritario", "Tipo_Defecto"])
 
 col_tipus      = pick_col(df_templates, ["Tipus","Tipo"])
@@ -210,15 +222,13 @@ if "auth_user" not in st.session_state:
 equip_actual = str(st.session_state.auth_user).strip()
 
 # ==========================================
-# FILTRAR PROJECTES (Múltiples equips suportats per comes)
+# FILTRAR PROJECTES
 # ==========================================
 if col_equip_proj:
     def projecte_permet_equip(row_equip):
-        if pd.isna(row_equip) or str(row_equip).strip() == "": 
-            return True
+        if pd.isna(row_equip) or str(row_equip).strip() == "": return True
         llista_equips = [e.strip().lower() for e in str(row_equip).split(",")]
         return equip_actual.lower() in llista_equips
-
     df_proj = df_projectes[df_projectes[col_equip_proj].apply(projecte_permet_equip)].copy()
 else: 
     df_proj = df_projectes.copy()
@@ -240,18 +250,21 @@ with col_out:
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ==========================================
-# SELECCIÓ PROJECTE I TREBALL
+# SELECCIÓ PROJECTE I TREBALL (AMB ORDRE PERSONALITZAT)
 # ==========================================
 col_a, col_b = st.columns(2)
-obra_sel = col_a.selectbox("Proyecto", sorted(df_proj[col_nom].tolist()))
 
-# Busquem les dades del projecte seleccionat per trobar el treball predeterminat
+# Llistes amb la lògica de "cúa" (tail) aplicada
+llista_projectes = sort_with_tail(df_proj[col_nom].tolist())
+llista_treballs = sort_with_tail(df_templates[col_tipus].tolist())
+
+obra_sel = col_a.selectbox("Proyecto", llista_projectes)
+
+# Dades del projecte seleccionat
 dades_p = df_proj[df_proj[col_nom] == obra_sel].iloc[0]
 
-# Lògica de selecció automàtica de Treball
-llista_treballs = sorted(df_templates[col_tipus].tolist())
+# Lògica de selecció automàtica del Treball Prioritari
 treball_predef = str(dades_p.get(col_treball_def, "")).strip() if col_treball_def else ""
-
 idx_treball = 0
 if treball_predef in llista_treballs:
     idx_treball = llista_treballs.index(treball_predef)
@@ -260,7 +273,7 @@ tipus_sel = col_b.selectbox("Trabajo realizado", llista_treballs, index=idx_treb
 
 membres_equip = st.text_input("Otros miembros del equipo en obra (opcional)", placeholder="Ej: Edgar, Eric, Mario", key="membres_equip")
 
-# Ara ja tenim el tipus de treball, carreguem la plantilla dinàmica
+# Plantilla dinàmica segons el treball seleccionat
 dades_t = df_templates[df_templates[col_tipus] == tipus_sel].iloc[0]
 
 logo_url = normalize_logo_url(str(dades_p.get(col_logo, "")).strip()) if col_logo and pd.notna(dades_p.get(col_logo, "")) else ""
@@ -285,13 +298,11 @@ valors_raw = {}
 if camps_actius:
     camps_num = [(n, t) for n, t in camps_actius if t == "num"]
     camps_txt = [(n, t) for n, t in camps_actius if t == "txt"]
-
     if camps_num:
         cols_num = st.columns(min(len(camps_num), 4))
         for i, (nom, _) in enumerate(camps_num):
             with cols_num[i % 4]:
                 valors_raw[nom] = st.text_input(nom, value="", placeholder="0", key=f"val_num_{i}")
-    
     if camps_txt:
         st.markdown("<div style='margin-top:8px'></div>", unsafe_allow_html=True)
         cols_txt = st.columns(min(len(camps_txt), 2))
@@ -304,8 +315,7 @@ comentaris = st.text_area("Comentarios de la jornada", placeholder="Detalles rel
 # ==========================================
 # FOTOS I FIRMES
 # ==========================================
-st.markdown('<div class="panel">', unsafe_allow_html=True)
-st.markdown('<span class="label-up">Reportaje fotográfico</span>', unsafe_allow_html=True)
+st.markdown('<div class="panel"><span class="label-up">Reportaje fotográfico</span>', unsafe_allow_html=True)
 tab_cam, tab_gal = st.tabs(["📷 Cámara", "🖼 Galería"])
 with tab_cam:
     if not st.session_state.camara_activa:
@@ -348,7 +358,6 @@ st.markdown("</div>", unsafe_allow_html=True)
 # ==========================================
 if st.button("▶ FINALIZAR Y ENVIAR INFORME", type="primary", use_container_width=True):
     with st.spinner("Enviando..."):
-        # Lògica Sheets
         try:
             df_seg = normalize_columns(conn.read(worksheet="Seguiment", ttl=0)).dropna(how="all")
         except:
@@ -381,52 +390,34 @@ if st.button("▶ FINALIZAR Y ENVIAR INFORME", type="primary", use_container_wid
                 msg["From"]     = "Estellé Parquet <noreply@estelleparquet.com>"
                 msg["Reply-To"] = smtp_cfg["user"]
                 msg["To"]       = ", ".join(destinataris)
-
                 logo_cid = "logo_client_estelle"
 
                 treballs_html = ""
                 for nom, tipus in camps_actius:
                     val = valors_raw.get(nom, "").strip()
                     if not val or val == "0" or val == "0.0": continue
-                    
                     if tipus == "num":
                         vf = fmt_valor(to_float_or_zero(val))
-                        treballs_html += f"""
-                        <tr>
-                          <td align="right" style="padding:5px 10px 5px 0;font-size:22px;font-weight:700;color:#555;font-family:Montserrat,sans-serif;white-space:nowrap">{vf}</td>
-                          <td align="left" style="padding:5px 0;font-size:17px;color:#888;font-family:Montserrat,sans-serif">{nom}</td>
-                        </tr>"""
+                        treballs_html += f'<tr><td align="right" style="padding:5px 10px 5px 0;font-size:22px;font-weight:700;color:#555;font-family:Montserrat,sans-serif;white-space:nowrap">{vf}</td><td align="left" style="padding:5px 0;font-size:17px;color:#888;font-family:Montserrat,sans-serif">{nom}</td></tr>'
                     else:
-                        treballs_html += f"""
-                        <tr>
-                          <td colspan="2" style="padding:5px 0;font-size:15px;font-family:Montserrat,sans-serif">
-                            <span style="color:#7747ff;font-weight:600">{nom}:</span> <span style="color:#555;margin-left:6px">{val}</span>
-                          </td>
-                        </tr>"""
+                        treballs_html += f'<tr><td colspan="2" style="padding:5px 0;font-size:15px;font-family:Montserrat,sans-serif"><span style="color:#7747ff;font-weight:600">{nom}:</span> <span style="color:#555;margin-left:6px">{val}</span></td></tr>'
 
-                obs_html = f"""
-                <tr><td colspan="2" style="padding-top:18px">
-                  <p style="margin:0 0 4px;color:#421cad;font-size:13px;font-weight:700;font-family:Montserrat,sans-serif;text-transform:uppercase;letter-spacing:1px">Comentarios de la jornada</p>
-                  <p style="margin:0;color:#6b5ea8;font-size:15px;line-height:1.6;font-family:Montserrat,sans-serif">{comentaris}</p>
-                </td></tr>""" if comentaris.strip() else ""
+                obs_html = f'<tr><td colspan="2" style="padding-top:18px"><p style="margin:0 0 4px;color:#421cad;font-size:13px;font-weight:700;font-family:Montserrat,sans-serif;text-transform:uppercase;letter-spacing:1px">Comentarios de la jornada</p><p style="margin:0;color:#6b5ea8;font-size:15px;line-height:1.6;font-family:Montserrat,sans-serif">{comentaris}</p></td></tr>' if comentaris.strip() else ""
 
                 adj_parts = []
                 if st.session_state.fotos_acumulades: adj_parts.append(f"{len(st.session_state.fotos_acumulades)} foto(s)")
                 if st.session_state.firma_resp_bytes: adj_parts.append("firma responsable")
                 if st.session_state.firma_cli_bytes:  adj_parts.append("firma cliente")
-                adjunts_html = (f"""<tr><td colspan="2" style="padding-top:14px;font-size:12px;color:#aaa;font-family:Montserrat,sans-serif">📎 Adjuntos: {", ".join(adj_parts)}</td></tr>""" if adj_parts else "")
+                adj_html = (f'<tr><td colspan="2" style="padding-top:14px;font-size:12px;color:#aaa;font-family:Montserrat,sans-serif">📎 Adjuntos: {", ".join(adj_parts)}</td></tr>' if adj_parts else "")
 
                 logo_html = f'<img src="cid:{logo_cid}" width="225" style="display:block;margin:0 auto;max-width:225px;border:0">' if logo_bytes else (f'<img src="{logo_url}" width="225" style="display:block;margin:0 auto;max-width:225px;border:0">' if logo_url.startswith("http") else "")
 
-                def firma_td(label, has_firma, filename):
-                    if not has_firma: return ""
-                    return f'<td width="50%" style="padding:25px;vertical-align:top"><p style="margin:0;font-family:Montserrat,sans-serif;font-size:16px;color:#101112">📎 {label}</p><p style="margin:4px 0 0;font-family:Montserrat,sans-serif;font-size:12px;color:#aaa">{filename}</p></td>'
+                def f_td(lbl, has, fn):
+                    return f'<td width="50%" style="padding:25px;vertical-align:top"><p style="margin:0;font-family:Montserrat,sans-serif;font-size:16px;color:#101112">📎 {lbl}</p><p style="margin:4px 0 0;font-family:Montserrat,sans-serif;font-size:12px;color:#aaa">{fn}</p></td>' if has else ""
 
-                firma_resp_td = firma_td("Firma responsable", st.session_state.firma_resp_bytes is not None, "firma_responsable.jpg")
-                firma_cli_td  = firma_td("Firma cliente", st.session_state.firma_cli_bytes is not None, "firma_cliente.jpg")
-                firmes_row = f'<tr><td style="padding:0 30px"><hr style="border:none;border-top:1px solid #e8e0d0;margin:0"></td></tr><tr><td style="padding:10px 0"><table width="100%"><tr>{firma_resp_td}{firma_cli_td}</tr></table></td></tr>' if (firma_resp_td or firma_cli_td) else ""
+                f_row = f'<tr><td style="padding:0 30px"><hr style="border:none;border-top:1px solid #e8e0d0;margin:0"></td></tr><tr><td style="padding:10px 0"><table width="100%"><tr>{f_td("Firma responsable", st.session_state.firma_resp_bytes is not None, "firma_responsable.jpg")}{f_td("Firma cliente", st.session_state.firma_cli_bytes is not None, "firma_cliente.jpg")}</tr></table></td></tr>' if (st.session_state.firma_resp_bytes or st.session_state.firma_cli_bytes) else ""
 
-                equip_html = f'<table width="60%" align="center" style="margin-top:16px;"><tr><td style="border-top:1px solid #e8e0d0; padding-top:16px;" align="center"><p style="margin:0;font-size:14px;color:#aaa;font-weight:600;font-family:Montserrat,sans-serif">Equipo</p><p style="margin:0;font-size:18px;font-weight:600;color:#8125bb;font-family:Montserrat,sans-serif">{membres_equip.strip()}</p></td></tr></table>' if membres_equip.strip() else ""
+                eq_html = f'<table width="60%" align="center" style="margin-top:16px;"><tr><td style="border-top:1px solid #e8e0d0; padding-top:16px;" align="center"><p style="margin:0;font-size:14px;color:#aaa;font-weight:600;font-family:Montserrat,sans-serif">Equipo</p><p style="margin:0;font-size:18px;font-weight:600;color:#8125bb;font-family:Montserrat,sans-serif">{membres_equip.strip()}</p></td></tr></table>' if membres_equip.strip() else ""
 
                 html = f"""<!DOCTYPE html><html><body style="margin:0;padding:0;background:#fefdf1">
 <table width="100%" bgcolor="#fefdf1"><tr><td align="center" style="padding:30px 10px">
@@ -437,10 +428,10 @@ if st.button("▶ FINALIZAR Y ENVIAR INFORME", type="primary", use_container_wid
   <tr><td align="center" style="padding:22px 30px 8px"><p style="margin:0 0 4px;font-size:11px;color:#777;text-transform:uppercase;letter-spacing:2px;font-family:Montserrat,sans-serif">Proyecto</p><p style="margin:0 0 4px;font-size:20px;font-weight:700;color:#1a1a1a;font-family:Montserrat,sans-serif">{obra_sel}</p></td></tr>
   <tr><td style="padding:14px 30px 0"><hr style="border:none;border-top:1px solid #e8e0d0;margin:0"></td></tr>
   <tr><td align="center" style="padding:20px 30px 6px"><p style="margin:0;font-size:13px;font-weight:700;color:#7747ff;text-transform:uppercase;letter-spacing:3px;font-family:Montserrat,sans-serif">Trabajos</p></td></tr>
-  <tr><td align="center" style="padding:4px 30px 20px"><table align="center">{treballs_html}{obs_html}{adjunts_html}</table></td></tr>
+  <tr><td align="center" style="padding:4px 30px 20px"><table align="center">{treballs_html}{obs_html}{adj_html}</table></td></tr>
   <tr><td style="padding:0 30px"><hr style="border:none;border-top:1px solid #e8e0d0;margin:0"></td></tr>
-  <tr><td align="center" style="padding:20px 30px"><p style="margin:0;font-size:14px;color:#aaa;font-weight:600;font-family:Montserrat,sans-serif">Responsable en obra</p><p style="margin:0;font-size:20px;font-weight:700;color:#8125bb;font-family:Montserrat,sans-serif">{equip_actual}</p>{equip_html}</td></tr>
-  {firmes_row}
+  <tr><td align="center" style="padding:20px 30px"><p style="margin:0;font-size:14px;color:#aaa;font-weight:600;font-family:Montserrat,sans-serif">Responsable en obra</p><p style="margin:0;font-size:20px;font-weight:700;color:#8125bb;font-family:Montserrat,sans-serif">{equip_actual}</p>{eq_html}</td></tr>
+  {f_row}
   <tr><td align="center" style="padding:16px 30px 24px;border-top:1px solid #e8e0d0"><a href="http://www.estelleparquet.com" style="color:#4e342e;font-size:13px;text-decoration:none;font-family:Montserrat,sans-serif">www.estelleparquet.com</a></td></tr>
 </table></td></tr></table></body></html>"""
 
@@ -453,15 +444,12 @@ if st.button("▶ FINALIZAR Y ENVIAR INFORME", type="primary", use_container_wid
                     img_logo = MIMEImage(logo_bytes, _subtype="jpeg")
                     img_logo.add_header("Content-ID", f"<{logo_cid}>")
                     body_related.attach(img_logo)
-
                 msg.attach(body_related)
 
-                for nom_f, cont, mime in list(st.session_state.fotos_acumulades) + ([(f"firma_responsable.jpg", st.session_state.firma_resp_bytes, "image/jpeg")] if st.session_state.firma_resp_bytes else []) + ([(f"firma_cliente.jpg", st.session_state.firma_cli_bytes, "image/jpeg")] if st.session_state.firma_cli_bytes else []):
+                for n_f, cont, mime in list(st.session_state.fotos_acumulades) + ([(f"firma_responsable.jpg", st.session_state.firma_resp_bytes, "image/jpeg")] if st.session_state.firma_resp_bytes else []) + ([(f"firma_cliente.jpg", st.session_state.firma_cli_bytes, "image/jpeg")] if st.session_state.firma_cli_bytes else []):
                     adj = MIMEBase(*(mime.split("/")))
-                    adj.set_payload(cont)
-                    encoders.encode_base64(adj)
-                    adj.add_header("Content-Disposition", "attachment", filename=nom_f)
-                    msg.attach(adj)
+                    adj.set_payload(cont); encoders.encode_base64(adj)
+                    adj.add_header("Content-Disposition", "attachment", filename=n_f); msg.attach(adj)
 
                 with smtplib.SMTP(smtp_cfg["server"], smtp_cfg["port"]) as s:
                     s.starttls(); s.login(smtp_cfg["user"], smtp_cfg["password"])

@@ -183,7 +183,6 @@ def pick_col(df: pd.DataFrame, options: list) -> Optional[str]:
 
 def sort_with_tail(items_list):
     tail_items = ["Visita técnica", "Reparaciones", "Final de obra"]
-    # dict.fromkeys preserva l'ordre d'inserció i elimina duplicats
     clean_list = list(dict.fromkeys(str(x).strip() for x in items_list if pd.notna(x) and str(x).strip()))
     main = sorted([x for x in clean_list if x not in tail_items])
     tail = [x for x in tail_items if x in clean_list]
@@ -295,8 +294,6 @@ def send_email(smtp_cfg, destinataris, subject, html_body,
                fotos: list, firma_resp: Optional[bytes], firma_cli: Optional[bytes]):
     msg = MIMEMultipart("mixed")
     msg["Subject"]  = subject
-    # FIX: From ha de coincidir amb l'usuari autenticat SMTP.
-    # FIX: formataddr codifica correctament el nom amb accents.
     msg["From"]     = formataddr(("Estelle Parquet", smtp_cfg["user"]))
     msg["Reply-To"] = smtp_cfg["user"]
     msg["To"]       = ", ".join(destinataris)
@@ -322,7 +319,6 @@ def send_email(smtp_cfg, destinataris, subject, html_body,
         adj.add_header("Content-Disposition", "attachment", filename=n_f)
         msg.attach(adj)
 
-    # FIX: suport per a port 465 (SSL directe) a més de 587 (STARTTLS)
     port = int(smtp_cfg.get("port", 587))
     if port == 465:
         with smtplib.SMTP_SSL(smtp_cfg["server"], port) as s:
@@ -452,9 +448,6 @@ df_templates[col_tipus] = df_templates[col_tipus].astype(str).str.strip()
 # ==========================================
 # LOGIN — NORMAL + REVISOR
 # ==========================================
-# El PIN de revisor es defineix a st.secrets["revisor"]["pin"]
-# Pot ser el teu PIN o el de Luis — múltiples revisors possibles.
-
 def get_revisor_pins() -> list:
     try:
         raw = st.secrets["revisor"]["pin"]
@@ -468,7 +461,6 @@ if "auth_user" not in st.session_state:
         pin_in = st.text_input("PIN de Equipo", type="password", placeholder="····")
         if st.form_submit_button("ENTRAR"):
             pin_norm = norm_pin(pin_in)
-            # Revisor?
             if pin_norm in get_revisor_pins():
                 st.session_state.auth_user = "Revisor"
                 st.session_state.auth_rol  = "revisor"
@@ -523,12 +515,10 @@ if rol_actual == "revisor":
         f"📋 Historial ({len(enviats) + len(rebutjats)})"
     ])
 
-    # ── TAB: PENDENTS ──────────────────────────────────────────────────
     with tab_pend:
         if pendents.empty:
             st.success("✅ No hi ha informes pendents de revisió.")
         else:
-            # Selector d'esborrany pendent
             pendent_opts = {
                 f"[{r['Timestamp']}]  {r['Obra']}  ·  {r['Equip']}  ·  {r['Tipus']}": r["ID"]
                 for _, r in pendents.iterrows()
@@ -537,7 +527,6 @@ if rol_actual == "revisor":
             borrany_id = pendent_opts[sel_label]
             brow = pendents[pendents["ID"] == borrany_id].iloc[0]
 
-            # Reconstruïm dades
             try:
                 valors_dict_orig = json.loads(brow["Valors_JSON"]) if brow["Valors_JSON"] else {}
             except Exception:
@@ -547,12 +536,18 @@ if rol_actual == "revisor":
             except Exception:
                 fotos_b64_list = []
 
-            # FIX: comprovació de string buit a més de None
             firma_resp_b = b64_to_bytes(brow["Firma_resp_B64"]) if brow.get("Firma_resp_B64", "").strip() else None
             firma_cli_b  = b64_to_bytes(brow["Firma_cli_B64"])  if brow.get("Firma_cli_B64", "").strip()  else None
             fotos_bytes  = [(f"foto_{i+1:02d}.jpg", b64_to_bytes(b), "image/jpeg")
                             for i, b in enumerate(fotos_b64_list)]
+
+            # Emails: primer del borrany desat, fallback de la fulla actual
             destinataris_orig = [e.strip() for e in str(brow.get("Destinataris","")).split(",") if e.strip()]
+            if not destinataris_orig and col_emails:
+                dades_p_rev = df_projectes[df_projectes[col_nom] == brow["Obra"]]
+                if not dades_p_rev.empty:
+                    emails_fulla = str(dades_p_rev.iloc[0].get(col_emails, "")).strip()
+                    destinataris_orig = [e.strip() for e in emails_fulla.split(",") if e.strip()]
 
             st.markdown("---")
             st.markdown(f"""
@@ -563,10 +558,8 @@ if rol_actual == "revisor":
                 <span>🗓 {brow['Timestamp']}</span>
             </div>""", unsafe_allow_html=True)
 
-            # ── EDITOR D'INFORME ──────────────────────────────────────
             with st.expander("✏️ Editar contingut de l'informe", expanded=True):
 
-                # Comentaris editables
                 comentaris_ed = st.text_area(
                     "Comentarios de la jornada",
                     value=brow.get("Comentaris", ""),
@@ -574,7 +567,6 @@ if rol_actual == "revisor":
                     key="rev_comentaris"
                 )
 
-                # Valors editables
                 st.markdown('<span class="label-up">Valors del informe</span>', unsafe_allow_html=True)
                 valors_ed = {}
                 if valors_dict_orig:
@@ -586,14 +578,12 @@ if rol_actual == "revisor":
                     st.info("Sense camps de mesures.")
                     valors_ed = {}
 
-                # Nota interna del revisor
                 nota_rev = st.text_input(
                     "Nota interna del revisor (opcional, no s'envia al client)",
                     placeholder="Ex: Corregit import m² incorrecte",
                     key="rev_nota"
                 )
 
-                # Fotos preview
                 if fotos_bytes:
                     st.markdown(f'<span class="label-up">Fotografies adjuntes ({len(fotos_bytes)})</span>', unsafe_allow_html=True)
                     t_html = '<div class="foto-thumb-row">'
@@ -601,7 +591,6 @@ if rol_actual == "revisor":
                         t_html += f'<img src="data:image/jpeg;base64,{img_to_thumb_b64(b)}">'
                     st.markdown(t_html + '</div>', unsafe_allow_html=True)
 
-                # Firmes preview
                 col_f1, col_f2 = st.columns(2)
                 with col_f1:
                     if firma_resp_b:
@@ -616,20 +605,24 @@ if rol_actual == "revisor":
                     else:
                         st.caption("Firma Client: —")
 
-                # Destinataris editables
+                # Destinataris: avís si buit i camp editable
+                if not destinataris_orig:
+                    st.warning(
+                        "⚠️ Aquest projecte no té cap email configurat. "
+                        "Afegeix l'email del client a la fulla Projectes (columna Emails\_Contacte) "
+                        "o escriu-lo manualment avar."
+                    )
                 dest_ed = st.text_input(
                     "Destinataris (emails separats per comes)",
                     value=", ".join(destinataris_orig),
+                    placeholder="client@empresa.com, cap.obra@empresa.com",
                     key="rev_dest"
                 )
 
-            # ── PREVIEW HTML ─────────────────────────────────────────
             with st.expander("👁 Previsualitzar email al client"):
-                # FIX: get_camps_actius elimina la lògica duplicada
                 dades_t_match = df_templates[df_templates[col_tipus] == brow["Tipus"]]
                 camps_actius_rev = get_camps_actius(dades_t_match.iloc[0]) if not dades_t_match.empty else []
 
-                # Logo del projecte
                 dades_p_match = df_projectes[df_projectes[col_nom] == brow["Obra"]]
                 logo_bytes_rev, logo_url_rev = None, ""
                 if not dades_p_match.empty and col_logo:
@@ -651,7 +644,6 @@ if rol_actual == "revisor":
                 )
                 st.components.v1.html(html_preview, height=600, scrolling=True)
 
-            # ── BOTONS D'ACCIÓ ────────────────────────────────────────
             st.markdown("---")
             c_apr, c_reb = st.columns(2)
 
@@ -659,14 +651,12 @@ if rol_actual == "revisor":
                 if st.button("✅ APROVAR I ENVIAR AL CLIENT", type="primary", use_container_width=True):
                     dest_final = [e.strip() for e in dest_ed.split(",") if e.strip()]
                     if not dest_final:
-                        st.error("Cal indicar almenys un destinatari.")
+                        st.error("❌ Cap destinatari. Afegeix l'email a la fulla Projectes o escriu-lo al camp de sobre.")
                     else:
                         with st.spinner("Enviant email al client..."):
                             try:
-                                # Guardem canvis del revisor primer
                                 update_borrany_contingut(borrany_id, comentaris_ed, valors_ed, nota_rev)
 
-                                # FIX: get_camps_actius elimina la lògica duplicada
                                 dades_t_match = df_templates[df_templates[col_tipus] == brow["Tipus"]]
                                 camps_actius_send = get_camps_actius(dades_t_match.iloc[0]) if not dades_t_match.empty else []
 
@@ -708,7 +698,6 @@ if rol_actual == "revisor":
                     st.warning("Informe marcat com a rebutjat. L'instal·lador haurà de reenviar.")
                     st.rerun()
 
-    # ── TAB: HISTORIAL ──────────────────────────────────────────────────
     with tab_hist:
         if enviats.empty and rebutjats.empty:
             st.info("Encara no hi ha historial d'informes.")
@@ -737,7 +726,6 @@ if rol_actual == "revisor":
 # ══════ VISTA INSTAL·LADOR ═════════════════
 # ==========================================
 
-# Filtrar projectes per equip
 if col_equip_proj:
     def projecte_permet_equip(row_equip):
         if pd.isna(row_equip) or str(row_equip).strip() == "": return True
@@ -750,7 +738,6 @@ else:
 df_proj = df_proj.drop_duplicates(subset=[col_nom])
 if df_proj.empty: st.warning("No hay proyectos asignados."); st.stop()
 
-# Capçalera
 col_hd, col_out = st.columns([5, 1])
 with col_hd:
     st.markdown(f"""<div class="team-header"><p>{datetime.now().strftime("%d · %m · %Y")}</p><h1>{equip_actual}</h1></div>""", unsafe_allow_html=True)
@@ -762,7 +749,6 @@ with col_out:
         st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
-# Selecció projecte i treball
 llista_projectes = sort_with_tail(df_proj[col_nom].tolist())
 llista_treballs  = sort_with_tail(df_templates[col_tipus].tolist())
 
@@ -784,10 +770,8 @@ with logo_top.container():
     if logo_url.startswith("http"):  st.image(logo_url, width=320)
     elif logo_bytes:                  st.image(logo_bytes, width=320)
 
-# FIX: get_camps_actius substitueix la lògica repetida
 camps_actius = get_camps_actius(dades_t)
 
-# Camps dinàmics
 st.markdown('<span class="label-up">Medidas y avance</span>', unsafe_allow_html=True)
 valors_raw = {}
 if camps_actius:
@@ -807,7 +791,6 @@ if camps_actius:
 
 comentaris = st.text_area("Comentarios de la jornada", placeholder="Detalles relevantes...", height=90, key="comentaris")
 
-# Fotos i Firmes
 st.markdown('<div class="panel"><span class="label-up">Reportaje fotográfico</span>', unsafe_allow_html=True)
 tab_cam, tab_gal = st.tabs(["📷 Cámara", "🖼 Galería"])
 with tab_cam:
@@ -858,7 +841,6 @@ st.markdown("</div>", unsafe_allow_html=True)
 # ==========================================
 if st.button("▶ ENVIAR A REVISIÓ", type="primary", use_container_width=True):
     with st.spinner("Desant informe per a revisió..."):
-        # 1. Guardar a Seguiment (sense canvis respecte a l'original)
         try:
             df_seg = normalize_columns(conn.read(worksheet="Seguiment", ttl=0)).dropna(how="all")
         except Exception:
@@ -882,7 +864,6 @@ if st.button("▶ ENVIAR A REVISIÓ", type="primary", use_container_width=True):
         except Exception as e:
             st.warning(f"Error actualitzant Seguiment: {e}")
 
-        # 2. Desar esborrany a Borranys
         destinataris_proj = [e.strip() for e in str(dades_p.get(col_emails, "")).split(",") if e.strip()]
         bid = save_borrany(
             equip=equip_actual,
@@ -907,7 +888,6 @@ if st.button("▶ ENVIAR A REVISIÓ", type="primary", use_container_width=True):
                     Pots tancar l'aplicació, el teu informe ja està desat.</p>
                 </div>
             </div>""", unsafe_allow_html=True)
-            # FIX: rerun per netejar visualmente els camps del formulari
             st.session_state.fotos_acumulades = []
             st.session_state.firma_resp_bytes = None
             st.session_state.firma_cli_bytes  = None

@@ -17,6 +17,7 @@ from email.mime.base import MIMEBase
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import formataddr
 from streamlit_gsheets import GSheetsConnection
 from streamlit_drawable_canvas import st_canvas
 
@@ -182,10 +183,19 @@ def pick_col(df: pd.DataFrame, options: list) -> Optional[str]:
 
 def sort_with_tail(items_list):
     tail_items = ["Visita técnica", "Reparaciones", "Final de obra"]
-    clean_list = list(set([str(x).strip() for x in items_list if pd.notna(x) and str(x).strip()]))
+    # dict.fromkeys preserva l'ordre d'inserció i elimina duplicats
+    clean_list = list(dict.fromkeys(str(x).strip() for x in items_list if pd.notna(x) and str(x).strip()))
     main = sorted([x for x in clean_list if x not in tail_items])
     tail = [x for x in tail_items if x in clean_list]
     return main + tail
+
+def get_camps_actius(dades_t_row) -> list:
+    """Retorna la llista de (nom_camp, tipus) per a una fila de Config_Templates."""
+    camps = []
+    for i, col_key in enumerate(CAMPS_COLS, 1):
+        if col_key and pd.notna(dades_t_row.get(col_key, "")) and str(dades_t_row.get(col_key, "")).strip():
+            camps.append((str(dades_t_row.get(col_key)).strip(), "num" if i <= 4 else "txt"))
+    return camps
 
 # ==========================================
 # EMAIL HTML BUILDER (funció reutilitzable)
@@ -285,7 +295,9 @@ def send_email(smtp_cfg, destinataris, subject, html_body,
                fotos: list, firma_resp: Optional[bytes], firma_cli: Optional[bytes]):
     msg = MIMEMultipart("mixed")
     msg["Subject"]  = subject
-    msg["From"]     = "Estellé Parquet <noreply@estelleparquet.com>"
+    # FIX: From ha de coincidir amb l'usuari autenticat SMTP.
+    # FIX: formataddr codifica correctament el nom amb accents.
+    msg["From"]     = formataddr(("Estelle Parquet", smtp_cfg["user"]))
     msg["Reply-To"] = smtp_cfg["user"]
     msg["To"]       = ", ".join(destinataris)
     logo_cid = "logo_client_estelle"
@@ -310,9 +322,17 @@ def send_email(smtp_cfg, destinataris, subject, html_body,
         adj.add_header("Content-Disposition", "attachment", filename=n_f)
         msg.attach(adj)
 
-    with smtplib.SMTP(smtp_cfg["server"], smtp_cfg["port"]) as s:
-        s.starttls(); s.login(smtp_cfg["user"], smtp_cfg["password"])
-        s.sendmail(smtp_cfg["user"], destinataris, msg.as_string())
+    # FIX: suport per a port 465 (SSL directe) a més de 587 (STARTTLS)
+    port = int(smtp_cfg.get("port", 587))
+    if port == 465:
+        with smtplib.SMTP_SSL(smtp_cfg["server"], port) as s:
+            s.login(smtp_cfg["user"], smtp_cfg["password"])
+            s.sendmail(smtp_cfg["user"], destinataris, msg.as_string())
+    else:
+        with smtplib.SMTP(smtp_cfg["server"], port) as s:
+            s.starttls()
+            s.login(smtp_cfg["user"], smtp_cfg["password"])
+            s.sendmail(smtp_cfg["user"], destinataris, msg.as_string())
 
 # ==========================================
 # BORRANYS: LLEGIR / GUARDAR
@@ -527,8 +547,9 @@ if rol_actual == "revisor":
             except Exception:
                 fotos_b64_list = []
 
-            firma_resp_b = b64_to_bytes(brow["Firma_resp_B64"]) if brow.get("Firma_resp_B64") else None
-            firma_cli_b  = b64_to_bytes(brow["Firma_cli_B64"])  if brow.get("Firma_cli_B64")  else None
+            # FIX: comprovació de string buit a més de None
+            firma_resp_b = b64_to_bytes(brow["Firma_resp_B64"]) if brow.get("Firma_resp_B64", "").strip() else None
+            firma_cli_b  = b64_to_bytes(brow["Firma_cli_B64"])  if brow.get("Firma_cli_B64", "").strip()  else None
             fotos_bytes  = [(f"foto_{i+1:02d}.jpg", b64_to_bytes(b), "image/jpeg")
                             for i, b in enumerate(fotos_b64_list)]
             destinataris_orig = [e.strip() for e in str(brow.get("Destinataris","")).split(",") if e.strip()]
@@ -604,16 +625,9 @@ if rol_actual == "revisor":
 
             # ── PREVIEW HTML ─────────────────────────────────────────
             with st.expander("👁 Previsualitzar email al client"):
-                # Reconstruïm camps_actius per al template del projecte
+                # FIX: get_camps_actius elimina la lògica duplicada
                 dades_t_match = df_templates[df_templates[col_tipus] == brow["Tipus"]]
-                camps_actius_rev = []
-                if not dades_t_match.empty:
-                    dades_t_rev = dades_t_match.iloc[0]
-                    for i, col_key in enumerate(CAMPS_COLS, 1):
-                        if col_key and pd.notna(dades_t_rev.get(col_key, "")) and str(dades_t_rev.get(col_key, "")).strip():
-                            nom_camp = str(dades_t_rev.get(col_key)).strip()
-                            tipus_c  = "num" if i <= 4 else "txt"
-                            camps_actius_rev.append((nom_camp, tipus_c))
+                camps_actius_rev = get_camps_actius(dades_t_match.iloc[0]) if not dades_t_match.empty else []
 
                 # Logo del projecte
                 dades_p_match = df_projectes[df_projectes[col_nom] == brow["Obra"]]
@@ -652,14 +666,9 @@ if rol_actual == "revisor":
                                 # Guardem canvis del revisor primer
                                 update_borrany_contingut(borrany_id, comentaris_ed, valors_ed, nota_rev)
 
-                                # Reconstruïm camps_actius si cal
+                                # FIX: get_camps_actius elimina la lògica duplicada
                                 dades_t_match = df_templates[df_templates[col_tipus] == brow["Tipus"]]
-                                camps_actius_send = []
-                                if not dades_t_match.empty:
-                                    dt = dades_t_match.iloc[0]
-                                    for i2, ck in enumerate(CAMPS_COLS, 1):
-                                        if ck and pd.notna(dt.get(ck,"")) and str(dt.get(ck,"")).strip():
-                                            camps_actius_send.append((str(dt.get(ck)).strip(), "num" if i2<=4 else "txt"))
+                                camps_actius_send = get_camps_actius(dades_t_match.iloc[0]) if not dades_t_match.empty else []
 
                                 html_final = build_email_html(
                                     obra_sel=brow["Obra"],
@@ -678,7 +687,7 @@ if rol_actual == "revisor":
                                 send_email(
                                     smtp_cfg=smtp_cfg,
                                     destinataris=dest_final,
-                                    subject=f"Seguimiento del proyecto {brow['Obra']} - Estellé parquet",
+                                    subject=f"Seguimiento del proyecto {brow['Obra']} - Estelle parquet",
                                     html_body=html_final,
                                     logo_bytes=logo_bytes_rev,
                                     logo_url=logo_url_rev,
@@ -775,15 +784,11 @@ with logo_top.container():
     if logo_url.startswith("http"):  st.image(logo_url, width=320)
     elif logo_bytes:                  st.image(logo_bytes, width=320)
 
+# FIX: get_camps_actius substitueix la lògica repetida
+camps_actius = get_camps_actius(dades_t)
+
 # Camps dinàmics
 st.markdown('<span class="label-up">Medidas y avance</span>', unsafe_allow_html=True)
-camps_actius = []
-for i, col_key in enumerate(CAMPS_COLS, 1):
-    if col_key and pd.notna(dades_t.get(col_key, "")) and str(dades_t.get(col_key, "")).strip():
-        nom_camp = str(dades_t.get(col_key)).strip()
-        tipus_c  = "num" if i <= 4 else "txt"
-        camps_actius.append((nom_camp, tipus_c))
-
 valors_raw = {}
 if camps_actius:
     camps_num = [(n, t) for n, t in camps_actius if t == "num"]
@@ -834,12 +839,18 @@ with cf1:
     st.caption("Responsable")
     cv_r = st_canvas(stroke_width=2, stroke_color="#1a1a1a", background_color="#fafafa", height=140, key="cv_r", display_toolbar=False)
     if st.button("💾 Guardar responsable"): st.session_state.firma_resp_bytes = canvas_to_bytes(cv_r); st.rerun()
-    if st.session_state.firma_resp_bytes: st.markdown('<div class="firma-ok">✔ Firma lista</div>', unsafe_allow_html=True)
+    if st.session_state.firma_resp_bytes:
+        st.markdown('<div class="firma-ok">✔ Firma lista</div>', unsafe_allow_html=True)
+        if st.button("🗑 Esborrar firma resp.", key="del_firma_r"):
+            st.session_state.firma_resp_bytes = None; st.rerun()
 with cf2:
     st.caption("Cliente")
     cv_c = st_canvas(stroke_width=2, stroke_color="#1a1a1a", background_color="#fafafa", height=140, key="cv_c", display_toolbar=False)
     if st.button("💾 Guardar cliente"): st.session_state.firma_cli_bytes = canvas_to_bytes(cv_c); st.rerun()
-    if st.session_state.firma_cli_bytes: st.markdown('<div class="firma-ok">✔ Firma lista</div>', unsafe_allow_html=True)
+    if st.session_state.firma_cli_bytes:
+        st.markdown('<div class="firma-ok">✔ Firma lista</div>', unsafe_allow_html=True)
+        if st.button("🗑 Esborrar firma client", key="del_firma_c"):
+            st.session_state.firma_cli_bytes = None; st.rerun()
 st.markdown("</div>", unsafe_allow_html=True)
 
 # ==========================================
@@ -896,7 +907,8 @@ if st.button("▶ ENVIAR A REVISIÓ", type="primary", use_container_width=True):
                     Pots tancar l'aplicació, el teu informe ja està desat.</p>
                 </div>
             </div>""", unsafe_allow_html=True)
-            # Netejar estat
+            # FIX: rerun per netejar visualmente els camps del formulari
             st.session_state.fotos_acumulades = []
             st.session_state.firma_resp_bytes = None
             st.session_state.firma_cli_bytes  = None
+            st.rerun()

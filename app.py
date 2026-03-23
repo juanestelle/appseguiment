@@ -164,12 +164,18 @@ def img_to_thumb_b64(content: bytes) -> str:
     img.save(out, format="JPEG", quality=70)
     return base64.b64encode(out.getvalue()).decode()
 
-def img_compress_b64(content: bytes, max_side: int = 1200, quality: int = 60) -> str:
-    """Comprimeix una imatge per guardar-la a Sheets (límit 50k chars/cel·la)."""
+def img_compress_b64(content: bytes, max_side: int = 600, quality: int = 40) -> str:
+    """Comprimeix una imatge per guardar-la a Sheets (límit 50k chars/cel·la).
+    Target: <30KB per imatge per deixar marge en cel·les JSON amb múltiples fotos."""
     img = Image.open(BytesIO(content)).convert("RGB")
     img.thumbnail((max_side, max_side))
     out = BytesIO()
-    img.save(out, format="JPEG", quality=quality)
+    # Prova qualitat reduïda fins que el resultat capiga
+    for q in [quality, 30, 20]:
+        out = BytesIO()
+        img.save(out, format="JPEG", quality=q)
+        if len(out.getvalue()) < 28000:  # ~37k chars base64
+            break
     return base64.b64encode(out.getvalue()).decode()
 
 def bytes_to_b64(b: bytes) -> str:
@@ -367,7 +373,22 @@ def save_borrany(equip, membres, obra, tipus, comentaris,
     valors_dict = {nom: valors_raw.get(nom, "") for nom, _ in camps_actius}
     valors_json = json.dumps(valors_dict, ensure_ascii=False)
 
-    fotos_b64 = json.dumps([img_compress_b64(b) for _, b, _ in fotos_acumulades])
+    # Comprimir fotos adaptativament: objectiu total < 40k chars base64 per cel·la
+    n_fotos = len(fotos_acumulades)
+    if n_fotos == 0:
+        fotos_b64 = json.dumps([])
+    else:
+        target_per_foto = 30000 // max(n_fotos, 1)  # bytes màxims per foto
+        fotos_compressed = []
+        for _, b, _ in fotos_acumulades:
+            for q in [40, 25, 15]:
+                compressed = img_compress_b64(b, max_side=600, quality=q)
+                if len(compressed) <= target_per_foto:
+                    fotos_compressed.append(compressed)
+                    break
+            else:
+                fotos_compressed.append(img_compress_b64(b, max_side=300, quality=15))
+        fotos_b64 = json.dumps(fotos_compressed)
 
     firma_resp_b64 = img_compress_b64(firma_resp_bytes, max_side=800, quality=70) if firma_resp_bytes else ""
     firma_cli_b64  = img_compress_b64(firma_cli_bytes,  max_side=800, quality=70) if firma_cli_bytes  else ""

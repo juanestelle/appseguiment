@@ -565,8 +565,8 @@ if rol_actual == "revisor":
             except Exception:
                 fotos_b64_list = []
 
-            firma_resp_b = b64_to_bytes(brow["Firma_resp_B64"]) if brow.get("Firma_resp_B64", "").strip() else None
-            firma_cli_b  = b64_to_bytes(brow["Firma_cli_B64"])  if brow.get("Firma_cli_B64", "").strip()  else None
+            firma_resp_b = b64_to_bytes(brow["Firma_resp_B64"]) if str(brow.get("Firma_resp_B64") or "").strip() else None
+            firma_cli_b  = b64_to_bytes(brow["Firma_cli_B64"])  if str(brow.get("Firma_cli_B64")  or "").strip() else None
             fotos_bytes  = [(f"foto_{i+1:02d}.jpg", b64_to_bytes(b), "image/jpeg")
                             for i, b in enumerate(fotos_b64_list)]
 

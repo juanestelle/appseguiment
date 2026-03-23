@@ -225,13 +225,21 @@ def build_email_html(obra_sel, camps_actius, valors_raw, comentaris,
         val = valors_raw.get(nom, "").strip()
         if not val or val == "0" or val == "0.0": continue
         if tipus == "num":
-            vf = fmt_valor(to_float_or_zero(val))
-            treballs_html += (
-                f'<tr><td align="right" style="padding:5px 10px 5px 0;font-size:22px;font-weight:700;'
-                f'color:#555;font-family:Montserrat,sans-serif;white-space:nowrap">{vf}</td>'
-                f'<td align="left" style="padding:5px 0;font-size:17px;color:#888;'
-                f'font-family:Montserrat,sans-serif">{nom}</td></tr>'
-            )
+            try:
+                num = float(val.replace(",", "."))
+                vf = str(int(num)) if num == int(num) else f"{num:.1f}"
+                treballs_html += (
+                    f'<tr><td align="right" style="padding:5px 10px 5px 0;font-size:22px;font-weight:700;'
+                    f'color:#555;font-family:Montserrat,sans-serif;white-space:nowrap">{vf}</td>'
+                    f'<td align="left" style="padding:5px 0;font-size:17px;color:#888;'
+                    f'font-family:Montserrat,sans-serif">{nom}</td></tr>'
+                )
+            except (ValueError, TypeError):
+                treballs_html += (
+                    f'<tr><td colspan="2" style="padding:5px 0;font-size:15px;font-family:Montserrat,sans-serif">'
+                    f'<span style="color:#7747ff;font-weight:600">{nom}:</span>'
+                    f' <span style="color:#555;margin-left:6px">{val}</span></td></tr>'
+                )
         else:
             treballs_html += (
                 f'<tr><td colspan="2" style="padding:5px 0;font-size:15px;font-family:Montserrat,sans-serif">'

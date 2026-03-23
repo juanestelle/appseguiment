@@ -154,8 +154,11 @@ def fetch_logo_jpeg(url: str) -> Optional[bytes]:
 
 def fmt_valor(v) -> str:
     if v is None: return "0"
-    f = float(v)
-    return str(int(f)) if f == int(f) else f"{f:.1f}"
+    try:
+        f = float(str(v).replace(",", "."))
+        return str(int(f)) if f == int(f) else f"{f:.1f}"
+    except (ValueError, TypeError):
+        return str(v)
 
 def img_to_thumb_b64(content: bytes) -> str:
     img = Image.open(BytesIO(content)).convert("RGB")

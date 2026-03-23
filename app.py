@@ -487,6 +487,14 @@ def get_revisor_pins() -> list:
     except Exception:
         return []
 
+def get_directe_pins() -> list:
+    """PINs que envien l'email directament al client sense passar per revisió."""
+    try:
+        raw = st.secrets["directe"]["pin"]
+        return [norm_pin(p) for p in str(raw).split(",")]
+    except Exception:
+        return []
+
 if "auth_user" not in st.session_state:
     st.markdown("""<div class="team-header"><h1>Estellé Parquet</h1><p>Acceso Instaladores</p></div>""", unsafe_allow_html=True)
     with st.form("login"):
@@ -496,12 +504,14 @@ if "auth_user" not in st.session_state:
             if pin_norm in get_revisor_pins():
                 st.session_state.auth_user = "Revisor"
                 st.session_state.auth_rol  = "revisor"
+                st.session_state.auth_pin  = pin_norm
                 st.rerun()
             else:
                 match = df_equips[df_equips[col_pin].apply(norm_pin) == pin_norm]
                 if not match.empty:
                     st.session_state.auth_user = str(match.iloc[0][col_equip_eq]).strip()
                     st.session_state.auth_rol  = "instalador"
+                    st.session_state.auth_pin  = pin_norm
                     st.session_state.fotos_acumulades = []
                     st.session_state.camara_activa    = False
                     st.session_state.firma_resp_bytes = None
@@ -869,10 +879,15 @@ with cf2:
 st.markdown("</div>", unsafe_allow_html=True)
 
 # ==========================================
-# ENVIAMENT → ARA VA A REVISIÓ
+# ENVIAMENT → DIRECTE O A REVISIÓ segons PIN
 # ==========================================
-if st.button("▶ ENVIAR A REVISIÓ", type="primary", use_container_width=True):
-    with st.spinner("Desant informe per a revisió..."):
+pin_actual = st.session_state.get("auth_pin", "")
+es_directe = pin_actual in get_directe_pins()
+
+btn_label = "▶ ENVIAR AL CLIENT" if es_directe else "▶ ENVIAR A REVISIÓ"
+if st.button(btn_label, type="primary", use_container_width=True):
+    spinner_msg = "Enviant informe al client..." if es_directe else "Desant informe per a revisió..."
+    with st.spinner(spinner_msg):
         try:
             df_seg = normalize_columns(conn.read(worksheet="Seguiment", ttl=0)).dropna(how="all")
         except Exception:
@@ -880,13 +895,14 @@ if st.button("▶ ENVIAR A REVISIÓ", type="primary", use_container_width=True):
                                   [f"Dato{i}" for i in range(1,11)] + ["Comentarios","Fotos","Firmas","Estat"])
 
         noms_camps = [n for n, _ in camps_actius]
+        estat_seg = "ENVIAT" if es_directe else "PENDENT REVISIÓ"
         row_seg = {
             "Fecha": datetime.now().strftime("%d/%m/%Y"), "Hora": datetime.now().strftime("%H:%M"),
             "Equipo": equip_actual, "Miembros": membres_equip.strip(),
             "Proyecto": obra_sel, "Trabajo": tipus_sel, "Comentarios": comentaris,
             "Fotos": len(st.session_state.fotos_acumulades),
             "Firmas": ("Resp" if st.session_state.firma_resp_bytes else "") + (" · Cli" if st.session_state.firma_cli_bytes else ""),
-            "Estat": "PENDENT REVISIÓ"
+            "Estat": estat_seg
         }
         for i in range(10):
             nom = noms_camps[i] if i < len(noms_camps) else ""
@@ -897,30 +913,78 @@ if st.button("▶ ENVIAR A REVISIÓ", type="primary", use_container_width=True):
             st.warning(f"Error actualitzant Seguiment: {e}")
 
         destinataris_proj = [e.strip() for e in str(dades_p.get(col_emails, "")).split(",") if e.strip()]
-        bid = save_borrany(
-            equip=equip_actual,
-            membres=membres_equip.strip(),
-            obra=obra_sel,
-            tipus=tipus_sel,
-            comentaris=comentaris,
-            camps_actius=camps_actius,
-            valors_raw=valors_raw,
-            fotos_acumulades=st.session_state.fotos_acumulades,
-            firma_resp_bytes=st.session_state.firma_resp_bytes,
-            firma_cli_bytes=st.session_state.firma_cli_bytes,
-            destinataris=destinataris_proj
-        )
 
-        if bid:
-            st.markdown("""
-            <div class="success-box">
-                <div>
-                    <h4>✅ Informe enviat a revisió</h4>
-                    <p>El responsable d'àrea revisarà el contingut i l'enviarà al client quan l'aprovi.<br>
-                    Pots tancar l'aplicació, el teu informe ja està desat.</p>
-                </div>
-            </div>""", unsafe_allow_html=True)
-            st.session_state.fotos_acumulades = []
-            st.session_state.firma_resp_bytes = None
-            st.session_state.firma_cli_bytes  = None
-            st.rerun()
+        if es_directe:
+            # Enviar directament al client sense passar per Borranys
+            if not destinataris_proj:
+                st.error("❌ No hi ha email de contacte configurat al projecte. Afegeix-lo a la fulla Projectes.")
+            else:
+                try:
+                    logo_url_d = normalize_logo_url(str(dades_p.get(col_logo, "") or "").strip()) if col_logo else ""
+                    logo_bytes_d = fetch_logo_jpeg(logo_url_d) if logo_url_d else None
+                    html_d = build_email_html(
+                        obra_sel=obra_sel,
+                        camps_actius=camps_actius,
+                        valors_raw=valors_raw,
+                        comentaris=comentaris,
+                        equip_actual=equip_actual,
+                        membres_equip=membres_equip.strip(),
+                        logo_bytes=logo_bytes_d,
+                        logo_url=logo_url_d,
+                        fotos_acumulades=st.session_state.fotos_acumulades,
+                        firma_resp_bytes=st.session_state.firma_resp_bytes,
+                        firma_cli_bytes=st.session_state.firma_cli_bytes,
+                    )
+                    smtp_cfg = st.secrets["smtp"]
+                    send_email(
+                        smtp_cfg=smtp_cfg,
+                        destinataris=destinataris_proj,
+                        subject=f"Seguimiento del proyecto {obra_sel} - Estelle parquet",
+                        html_body=html_d,
+                        logo_bytes=logo_bytes_d,
+                        logo_url=logo_url_d,
+                        fotos=st.session_state.fotos_acumulades,
+                        firma_resp=st.session_state.firma_resp_bytes,
+                        firma_cli=st.session_state.firma_cli_bytes,
+                    )
+                    st.markdown("""
+                    <div class="success-box">
+                        <div>
+                            <h4>✅ Email enviat directament al client</h4>
+                            <p>L'informe ha estat enviat sense passar per revisió.</p>
+                        </div>
+                    </div>""", unsafe_allow_html=True)
+                    st.session_state.fotos_acumulades = []
+                    st.session_state.firma_resp_bytes = None
+                    st.session_state.firma_cli_bytes  = None
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error enviant email: {e}")
+        else:
+            bid = save_borrany(
+                equip=equip_actual,
+                membres=membres_equip.strip(),
+                obra=obra_sel,
+                tipus=tipus_sel,
+                comentaris=comentaris,
+                camps_actius=camps_actius,
+                valors_raw=valors_raw,
+                fotos_acumulades=st.session_state.fotos_acumulades,
+                firma_resp_bytes=st.session_state.firma_resp_bytes,
+                firma_cli_bytes=st.session_state.firma_cli_bytes,
+                destinataris=destinataris_proj
+            )
+
+            if bid:
+                st.markdown("""
+                <div class="success-box">
+                    <div>
+                        <h4>✅ Informe enviat a revisió</h4>
+                        <p>El responsable d'àrea revisarà el contingut i l'enviarà al client quan l'aprovi.<br>
+                        Pots tancar l'aplicació, el teu informe ja està desat.</p>
+                    </div>
+                </div>""", unsafe_allow_html=True)
+                st.session_state.fotos_acumulades = []
+                st.session_state.firma_resp_bytes = None
+                st.session_state.firma_cli_bytes  = None
+                st.rerun()

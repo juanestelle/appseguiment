@@ -984,6 +984,33 @@ if st.button(btn_label, type="primary", use_container_width=True):
             )
 
             if bid:
+                # Notificació als revisors
+                try:
+                    smtp_cfg = st.secrets["smtp"]
+                    revisors_notif = ["estelleparquetbcn1@gmail.com", "jestelle@mundoparquet.com"]
+                    app_url = st.secrets.get("app_url", {}).get("url", "https://appseguiment.streamlit.app")
+                    send_email(
+                        smtp_cfg=smtp_cfg,
+                        destinataris=revisors_notif,
+                        subject=f"[REVISIÓ PENDENT] {obra_sel} – {equip_actual}",
+                        html_body=f"""<!DOCTYPE html><html><body style="font-family:Montserrat,sans-serif;background:#fefdf1;padding:30px">
+<table width="580" style="background:#fff9e5;border-radius:14px;padding:30px;margin:auto">
+<tr><td align="center"><p style="font-size:20px;font-weight:700;color:#7747ff">Nou informe pendent de revisió</p></td></tr>
+<tr><td style="padding:10px 0;font-size:15px;color:#444">
+<b>Projecte:</b> {obra_sel}<br>
+<b>Equip:</b> {equip_actual}<br>
+<b>Treball:</b> {tipus_sel}<br>
+<b>Data:</b> {datetime.now().strftime("%d/%m/%Y %H:%M")}
+</td></tr>
+<tr><td align="center" style="padding:20px 0">
+<a href="{app_url}" style="background:#7747ff;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:15px">Revisar i enviar al client</a>
+</td></tr>
+</table></body></html>""",
+                        logo_bytes=None, logo_url="", fotos=[], firma_resp=None, firma_cli=None
+                    )
+                except Exception:
+                    pass  # La notificació és opcional, no ha de bloquejar
+
                 st.markdown("""
                 <div class="success-box">
                     <div>

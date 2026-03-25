@@ -219,6 +219,10 @@ def get_camps_actius(dades_t_row) -> list:
 def build_email_html(obra_sel, camps_actius, valors_raw, comentaris,
                      equip_actual, membres_equip, logo_bytes, logo_url,
                      fotos_acumulades, firma_resp_bytes, firma_cli_bytes) -> str:
+    # Normalitza per evitar NaN de pandas
+    membres_equip = str(membres_equip or "").strip()
+    comentaris    = str(comentaris    or "").strip()
+    equip_actual  = str(equip_actual  or "").strip()
     logo_cid = "logo_client_estelle"
     treballs_html = ""
     for nom, tipus in camps_actius:
@@ -292,8 +296,8 @@ def build_email_html(obra_sel, camps_actius, valors_raw, comentaris,
         f'<tr><td style="border-top:1px solid #e8e0d0; padding-top:16px;" align="center">'
         f'<p style="margin:0;font-size:14px;color:#aaa;font-weight:600;font-family:Montserrat,sans-serif">Equipo</p>'
         f'<p style="margin:0;font-size:18px;font-weight:600;color:#8125bb;font-family:Montserrat,sans-serif">'
-        f'{membres_equip.strip()}</p></td></tr></table>'
-    ) if membres_equip.strip() else ""
+        f'{str(membres_equip or "").strip()}</p></td></tr></table>'
+    ) if str(membres_equip or "").strip() else ""
 
     return f"""<!DOCTYPE html><html><body style="margin:0;padding:0;background:#fefdf1">
 <table width="100%" bgcolor="#fefdf1"><tr><td align="center" style="padding:30px 10px">

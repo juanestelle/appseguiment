@@ -618,7 +618,7 @@ if rol_actual == "revisor":
                     "Comentarios de la jornada",
                     value=brow.get("Comentaris", ""),
                     height=100,
-                    key="rev_comentaris"
+                    key=f"rev_comentaris_{borrany_id}"
                 )
 
                 st.markdown('<span class="label-up">Valors del informe</span>', unsafe_allow_html=True)
@@ -627,7 +627,7 @@ if rol_actual == "revisor":
                     cols_ed = st.columns(min(len(valors_dict_orig), 4))
                     for i, (nom, val) in enumerate(valors_dict_orig.items()):
                         with cols_ed[i % 4]:
-                            valors_ed[nom] = st.text_input(nom, value=str(val), key=f"rev_val_{i}")
+                            valors_ed[nom] = st.text_input(nom, value=str(val), key=f"rev_val_{borrany_id}_{i}")
                 else:
                     st.info("Sense camps de mesures.")
                     valors_ed = {}
@@ -635,7 +635,7 @@ if rol_actual == "revisor":
                 nota_rev = st.text_input(
                     "Nota interna del revisor (opcional, no s'envia al client)",
                     placeholder="Ex: Corregit import m² incorrecte",
-                    key="rev_nota"
+                    key=f"rev_nota_{borrany_id}"
                 )
 
                 if fotos_bytes:
@@ -670,7 +670,7 @@ if rol_actual == "revisor":
                     "Destinataris (emails separats per comes)",
                     value=", ".join(destinataris_orig),
                     placeholder="client@empresa.com, cap.obra@empresa.com",
-                    key="rev_dest"
+                    key=f"rev_dest_{borrany_id}"
                 )
 
             with st.expander("👁 Previsualitzar email al client"):

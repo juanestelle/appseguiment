@@ -1012,8 +1012,8 @@ if st.button(btn_label, type="primary", use_container_width=True):
 </table></body></html>""",
                         logo_bytes=None, logo_url="", fotos=[], firma_resp=None, firma_cli=None
                     )
-                except Exception:
-                    pass  # La notificació és opcional, no ha de bloquejar
+                except Exception as e_notif:
+                    st.warning(f"⚠️ No s'ha pogut enviar la notificació als revisors: {e_notif}")
 
                 st.markdown("""
                 <div class="success-box">
